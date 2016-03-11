@@ -4,7 +4,7 @@
 
 typedef unsigned long long uint64;
 
-//SHIFT must be 16KB / 2MB align according to KALSR config 
+//SHIFT must be 16KB / 2MB align according to KASLR config
 
 #define SHIFT(idx)  ((uint64)(idx) * 0x4000) 
 

@@ -1463,7 +1463,9 @@ int sec_debug_summary_init(void)
 	summary_info->magic[2] = SEC_DEBUG_SUMMARY_MAGIC2;
 	summary_info->magic[3] = SEC_DEBUG_SUMMARY_MAGIC3;
 	
+#ifdef CONFIG_KALLSYMS
 	sec_debug_summary_set_kallsyms_info(summary_info);
+#endif
 
 	pr_debug("%s, sec_debug_summary_init done [%d]\n", __func__, offset);
 

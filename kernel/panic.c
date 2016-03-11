@@ -134,7 +134,10 @@ void panic(const char *fmt, ...)
 	sec_debug_save_panic_info(buf,
 		(unsigned long)__builtin_return_address(0));
 #endif
+#ifdef CONFIG_SCHED_DEBUG
 	sysrq_sched_debug_show();
+#endif
+
 	/*
 	 * If we have crashed and we have a crash kernel loaded let it handle
 	 * everything else.

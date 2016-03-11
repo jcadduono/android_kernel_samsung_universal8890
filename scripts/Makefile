@@ -20,6 +20,12 @@ hostprogs-$(CONFIG_ASN1)	 += asn1_compiler
 HOSTCFLAGS_sortextable.o = -I$(srctree)/tools/include
 HOSTCFLAGS_asn1_compiler.o = -I$(srctree)/include
 
+ifeq ($(CONFIG_CRYPTO_FIPS),y)
+ifeq ($(CONFIG_RELOCATABLE_KERNEL),y)
+HOSTCFLAGS_sortextable.o += -DFIPS_KASLR
+endif
+endif
+
 always		:= $(hostprogs-y) $(hostprogs-m)
 
 # The following hostprogs-y programs are only build on demand

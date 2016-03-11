@@ -243,7 +243,7 @@ fi
 
 if [ -n "${CONFIG_RELOCATABLE_KERNEL}" ]; then
     if [ -n "${CONFIG_CRYPTO_FIPS}" ]; then
-	echo '  FIPS with KALSR : Generating hmac of crypto and fmp, then update vmlinux... '
+	echo '  FIPS with KASLR : Generating hmac of crypto and fmp, then update vmlinux... '
 	${CONFIG_SHELL} "${srctree}/scripts/fips_kaslr_crypto_hmac.sh" "${objtree}/vmlinux" "${objtree}/System.map"
     fi
 else

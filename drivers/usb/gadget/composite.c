@@ -1527,12 +1527,13 @@ composite_setup(struct usb_gadget *gadget, const struct usb_ctrlrequest *ctrl)
 					cdev->desc.bcdUSB = cpu_to_le16(0x0210);
 				}
 			}
-
+#ifdef CONFIG_USB_NOTIFY_PROC_LOG
 			if(cdev->desc.bcdUSB == cpu_to_le16(0x0310) ||
 				cdev->desc.bcdUSB == cpu_to_le16(0x0300))
-				store_usblog_notify(NOTIFY_USBSTATE, "SPEED=SPSS", NULL);	
+				store_usblog_notify(NOTIFY_USBSTATE, "SPEED=SPSS", NULL);
 			else
-				store_usblog_notify(NOTIFY_USBSTATE, "SPEED=HIGH", NULL);			
+				store_usblog_notify(NOTIFY_USBSTATE, "SPEED=HIGH", NULL);
+#endif
 
 			value = min(w_length, (u16) sizeof cdev->desc);
 			memcpy(req->buf, &cdev->desc, value);

@@ -98,13 +98,15 @@ do_func(Elf_Ehdr *ehdr, char const *const fname, table_sort_t custom_sort)
 	Elf_Shdr *symtab_sec = NULL;
 	Elf_Shdr *extab_sec = NULL;
 	Elf_Sym *sym;
+	Elf_Sym *sort_needed_sym;
+#ifndef FIPS_KASLR
 	const Elf_Sym *symtab;
 	Elf32_Word *symtab_shndx_start = NULL;
-	Elf_Sym *sort_needed_sym;
 	Elf_Shdr *sort_needed_sec;
+	uint32_t *sort_done_location;
+#endif
 	Elf_Rel *relocs = NULL;
 	int relocs_size = 0;
-	uint32_t *sort_done_location;
 	const char *secstrtab;
 	const char *strtab;
 	char *extab_image;
@@ -142,9 +144,11 @@ do_func(Elf_Ehdr *ehdr, char const *const fname, table_sort_t custom_sort)
 			symtab_sec = shdr + i;
 		if (strcmp(secstrtab + idx, ".strtab") == 0)
 			strtab_sec = shdr + i;
+#ifndef FIPS_KASLR
 		if (r(&shdr[i].sh_type) == SHT_SYMTAB_SHNDX)
 			symtab_shndx_start = (Elf32_Word *)(
 				(const char *)ehdr + _r(&shdr[i].sh_offset));
+#endif
 	}
 	if (strtab_sec == NULL) {
 		fprintf(stderr,	"no .strtab in  file: %s\n", fname);
@@ -154,8 +158,10 @@ do_func(Elf_Ehdr *ehdr, char const *const fname, table_sort_t custom_sort)
 		fprintf(stderr,	"no .symtab in  file: %s\n", fname);
 		fail_file();
 	}
+#ifndef FIPS_KASLR
 	symtab = (const Elf_Sym *)((const char *)ehdr +
 				   _r(&symtab_sec->sh_offset));
+#endif
 	if (extab_sec == NULL) {
 		fprintf(stderr,	"no __ex_table in  file: %s\n", fname);
 		fail_file();
@@ -194,6 +200,9 @@ do_func(Elf_Ehdr *ehdr, char const *const fname, table_sort_t custom_sort)
 			fname);
 		fail_file();
 	}
+
+	/* We need to sort ex_table in runtime due to KASLR */
+#ifndef FIPS_KASLR
 	sort_needed_sec = &shdr[get_secindex(r2(&sym->st_shndx),
 					     sort_needed_sym - symtab,
 					     symtab_shndx_start)];
@@ -206,6 +215,7 @@ do_func(Elf_Ehdr *ehdr, char const *const fname, table_sort_t custom_sort)
 	printf("sort done marker at %lx\n",
 	       (unsigned long)((char *)sort_done_location - (char *)ehdr));
 #endif
-	/* We need to sort ex_table in runtime due to KASLR */
-//	w(0, sort_done_location);
+	/* We sorted it, clear the flag. */
+	w(0, sort_done_location);
+#endif
 }

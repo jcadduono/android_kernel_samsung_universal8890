@@ -32,12 +32,14 @@ int remove_af_noise_register(struct remove_af_noise *af_cam)
 
 	return 0;
 }
+EXPORT_SYMBOL(remove_af_noise_register);
 
 void remove_af_noise_unregister(struct remove_af_noise *af_cam)
 {
 	af_sensor.af_pdata = NULL;
 	af_sensor.af_func = NULL;
 }
+EXPORT_SYMBOL(remove_af_noise_unregister);
 
 void report_shake_cam_data(struct ssp_data *data,
 	struct sensor_value *shake_cam_data)

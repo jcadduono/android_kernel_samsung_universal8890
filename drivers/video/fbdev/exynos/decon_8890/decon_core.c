@@ -1533,7 +1533,9 @@ static int decon_blank(int blank_mode, struct fb_info *info)
 	switch (blank_mode) {
 	case FB_BLANK_POWERDOWN:
 	case FB_BLANK_NORMAL:
+#ifdef CONFIG_DECON_EVENT_LOG
 		DISP_SS_EVENT_LOG(DISP_EVT_BLANK, &decon->sd, ktime_set(0, 0));
+#endif
 		ret = decon_disable(decon);
 		if (ret) {
 			decon_err("failed to disable decon\n");
@@ -1541,7 +1543,9 @@ static int decon_blank(int blank_mode, struct fb_info *info)
 		}
 		break;
 	case FB_BLANK_UNBLANK:
+#ifdef CONFIG_DECON_EVENT_LOG
 		DISP_SS_EVENT_LOG(DISP_EVT_UNBLANK, &decon->sd, ktime_set(0, 0));
+#endif
 		ret = decon_enable(decon);
 		if (ret) {
 			decon_err("failed to enable decon\n");
@@ -1569,8 +1573,10 @@ static void decon_activate_vsync(struct decon_device *decon)
 	mutex_lock(&decon->vsync_info.irq_lock);
 
 	prev_refcount = decon->vsync_info.irq_refcount++;
+#ifdef CONFIG_DECON_EVENT_LOG
 	if (!prev_refcount)
 		DISP_SS_EVENT_LOG(DISP_EVT_ACT_VSYNC, &decon->sd, ktime_set(0, 0));
+#endif
 
 	mutex_unlock(&decon->vsync_info.irq_lock);
 }
@@ -1584,8 +1590,10 @@ static void decon_deactivate_vsync(struct decon_device *decon)
 
 	new_refcount = --decon->vsync_info.irq_refcount;
 	WARN_ON(new_refcount < 0);
+#ifdef CONFIG_DECON_EVENT_LOG
 	if (!new_refcount)
 		DISP_SS_EVENT_LOG(DISP_EVT_DEACT_VSYNC, &decon->sd, ktime_set(0, 0));
+#endif
 
 	mutex_unlock(&decon->vsync_info.irq_lock);
 }
@@ -2044,7 +2052,9 @@ static int decon_set_wb_buffer(struct decon_device *decon,
 	struct device *dev;
 	struct decon_win_config *config = &win_config[MAX_DECON_WIN];
 
+#ifdef CONFIG_DECON_EVENT_LOG
 	DISP_SS_EVENT_LOG(DISP_EVT_WB_SET_BUFFER, &decon->sd, ktime_set(0, 0));
+#endif
 
 	plane_cnt = decon_get_plane_cnt(config->format);
 	for (i = 0; i < plane_cnt; ++i) {
@@ -2722,8 +2732,12 @@ static void __decon_update_regs(struct decon_device *decon, struct decon_reg_dat
 			decon_err("Failed to config VPP-%d\n", ODMA_WB);
 			decon->vpp_usage_bitmask &= ~(1 << ODMA_WB);
 			decon->vpp_err_stat[ODMA_WB] = true;
-		} else
+
+		}
+#ifdef CONFIG_DECON_EVENT_LOG
+		else
 			DISP_SS_EVENT_LOG(DISP_EVT_WB_SW_TRIGGER, &decon->sd, ktime_set(0, 0));
+#endif
 	}
 
 #if defined(CONFIG_EXYNOS8890_BTS_OPTIMIZATION)
@@ -2757,7 +2771,9 @@ static void __decon_update_regs(struct decon_device *decon, struct decon_reg_dat
 	decon_to_psr_info(decon, &psr);
 	if (decon_reg_start(decon->id, &psr) < 0)
 		BUG();
+#ifdef CONFIG_DECON_EVENT_LOG
 	DISP_SS_EVENT_LOG(DISP_EVT_TRIG_UNMASK, &decon->sd, ktime_set(0, 0));
+#endif
 #ifdef CONFIG_DECON_MIPI_DSI_PKTGO
 	if (!decon->id) {
 		ret = v4l2_subdev_call(decon->output_sd, core, ioctl, DSIM_IOC_PKT_GO_ENABLE, NULL);
@@ -2784,8 +2800,10 @@ int decon_wait_until_size_match(struct decon_device *decon,
 	unsigned long cnt = timeout / delay_time;
 	u32 decon_yres, dsim_yres;
 	u32 decon_xres, dsim_xres;
+#ifdef CONFIG_DECON_EVENT_LOG
 	u32 need_save = true;
 	struct disp_ss_size_info info;
+#endif
 
 	if ((decon->pdata->psr_mode == DECON_VIDEO_MODE) ||
 		(decon->pdata->out_type != DECON_OUT_DSI))
@@ -2802,6 +2820,7 @@ int decon_wait_until_size_match(struct decon_device *decon,
 		if (decon_yres == dsim_yres && decon_xres == dsim_xres)
 			goto wait_done;
 
+#ifdef CONFIG_DECON_EVENT_LOG
 		if (need_save) {
 			/* TODO: Save a err data */
 			info.w_in = decon_xres;
@@ -2811,6 +2830,7 @@ int decon_wait_until_size_match(struct decon_device *decon,
 			DISP_SS_EVENT_SIZE_ERR_LOG(&decon->sd, &info);
 			need_save = false;
 		}
+#endif
 
 		udelay(delay_time);
 	}
@@ -2940,7 +2960,9 @@ static void decon_update_regs(struct decon_device *decon, struct decon_reg_data 
 	decon->tracing_mark_write( decon->systrace_pid, 'E', "decon_fence_wait", 0 );
 
 	decon_check_vpp_used(decon, regs);
+#ifdef CONFIG_DECON_EVENT_LOG
 	DISP_SS_EVENT_LOG_WINCON(&decon->sd, regs);
+#endif
 
 #ifdef CONFIG_USE_VSYNC_SKIP
 	if (decon->pdata->out_type == DECON_OUT_DSI) {
@@ -3066,7 +3088,9 @@ static void decon_update_regs(struct decon_device *decon, struct decon_reg_data 
 	}
 
 end:
+#ifdef CONFIG_DECON_EVENT_LOG
 	DISP_SS_EVENT_LOG(DISP_EVT_TRIG_MASK, &decon->sd, ktime_set(0, 0));
+#endif
 	decon->trig_mask_timestamp =  ktime_get();
 
 #ifdef CONFIG_FB_DSU
@@ -3629,7 +3653,9 @@ windows_config:
 				decon_win_update_rect_reset(decon);
 #endif
 		}
+#ifdef CONFIG_DECON_EVENT_LOG
 		DISP_SS_EVENT_LOG_WINCON2(&decon->sd, regs);
+#endif
 		mutex_lock(&decon->update_regs_list_lock);
 		list_add_tail(&regs->list, &decon->update_regs_list);
 		decon->update_regs_list_cnt++;
@@ -4121,7 +4147,9 @@ static int decon_runtime_resume(struct device *dev)
 	struct platform_device *pdev = to_platform_device(dev);
 	struct decon_device *decon = platform_get_drvdata(pdev);
 
+#ifdef CONFIG_DECON_EVENT_LOG
 	DISP_SS_EVENT_LOG(DISP_EVT_DECON_RESUME, &decon->sd, ktime_set(0, 0));
+#endif
 	decon_dbg("decon%d %s +\n", decon->id, __func__);
 	mutex_lock(&decon->mutex);
 
@@ -4155,7 +4183,9 @@ static int decon_runtime_suspend(struct device *dev)
 	struct platform_device *pdev = to_platform_device(dev);
 	struct decon_device *decon = platform_get_drvdata(pdev);
 
+#ifdef CONFIG_DECON_EVENT_LOG
 	DISP_SS_EVENT_LOG(DISP_EVT_DECON_SUSPEND, &decon->sd, ktime_set(0, 0));
+#endif
 	decon_dbg("decon%d %s +\n", decon->id, __func__);
 	mutex_lock(&decon->mutex);
 
@@ -5400,7 +5430,9 @@ static int decon_probe(struct platform_device *pdev)
 
 decon_init_done:
 		decon->ignore_vsync = false;
+#ifdef CONFIG_DECON_EVENT_LOG
 		decon->disp_ss_log_level = DISP_EVENT_LEVEL_HIGH;
+#endif
 		if ((decon->id == 0)  && (decon->pdata->psr_mode == DECON_MIPI_COMMAND_MODE)) {
 			if (dsim == NULL) {
 				sd = decon->mdev->vpp_sd[decon->default_idma];
@@ -5549,7 +5581,9 @@ static void decon_shutdown(struct platform_device *pdev)
 	struct decon_device *decon = platform_get_drvdata(pdev);
 
 	dev_info(decon->dev, "%s + state:%d\n", __func__, decon->state);
+#ifdef CONFIG_DECON_EVENT_LOG
 	DISP_SS_EVENT_LOG(DISP_EVT_DECON_SHUTDOWN, &decon->sd, ktime_set(0, 0));
+#endif
 
 	decon->ignore_vsync = true;
 

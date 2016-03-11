@@ -57,9 +57,6 @@
 #include <linux/fs.h>
 #include <asm/uaccess.h>
 
-/* platform specific definitions */
-/* ex) #define __ANDROID__ */
-
 /* platform specific pre-processing */
 #define CONN_GADGET_SHORTNAME "android_ssusbcon"
 
