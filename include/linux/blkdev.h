@@ -422,6 +422,8 @@ struct request_queue {
 
 	unsigned int		nr_sorted;
 	unsigned int		in_flight[2];
+	unsigned long long	in_flight_time;
+	ktime_t			in_flight_stamp;
 	/*
 	 * Number of active block driver functions for which blk_drain_queue()
 	 * must wait. Must be incremented around functions that unlock the
@@ -457,6 +459,7 @@ struct request_queue {
 	unsigned int		flush_flags;
 	unsigned int		flush_not_queueable:1;
 	struct blk_flush_queue	*fq;
+	unsigned long		flush_ios;
 
 	struct list_head	requeue_list;
 	spinlock_t		requeue_lock;

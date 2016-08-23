@@ -114,10 +114,10 @@ static bool get_AFE_status(struct fts_ts_info *info)
 	regAdd[2] = 0x5A;
 	if (info->stm_ver == STM_VER7)
 	{
-		regAdd[2] = 0x53;
+		regAdd[2] = 0x52;
 	}
 
-	rc = info->fts_read_reg(info, regAdd, 3, buf, 4);
+	rc = info->fts_read_reg(info, regAdd, 3, buf, 3);
 	if (!rc)
 	{
 		tsp_debug_info(true, info->dev, "%s: Read Fail - Final AFE [Data : %2X] AFE Ver [Data : %2X] \n", __func__, buf[1], buf[2]);
@@ -551,12 +551,9 @@ void fts_execute_autotune(struct fts_ts_info *info)
 	unsigned char regData[4]; // {0xC1, 0x0E};
 	bool bFinalAFE = false;
 	bool NoNeedAutoTune = false; // default for factory
+
 	bFinalAFE = get_AFE_status(info);
-
-	#if !defined (CONFIG_SEC_FACTORY)
 	 NoNeedAutoTune = get_PureAutotune_status(info);  // Check flag and decide cx_tune
-	#endif
-
 	tsp_debug_info(true, info->dev, "%s: AFE(%d), NoNeedAutoTune(%d)\n", __func__,bFinalAFE, NoNeedAutoTune);
 
     if ((!NoNeedAutoTune) || (info->o_afe_ver!=info->afe_ver)){
@@ -591,17 +588,6 @@ void fts_execute_autotune(struct fts_ts_info *info)
     }
 
 	if (bFinalAFE) {
-#ifdef CONFIG_SEC_FACTORY
-		tsp_debug_info(true, info->dev, "%s: AFE_status(%d) write ( C1 0E )\n", __func__,bFinalAFE);
-		regData[0] = 0xC1;
-		regData[1] = 0x0E;
-		ret = info->fts_write_reg(info, regData, 2);//write C1 0E
-		if (ret < 0)
-			tsp_debug_info(true, info->dev, "%s: Flash Back up PureAutotune Fail(Set)\n", __func__);
-
-		msleep(20);
-		fts_fw_wait_for_event(info, STATUS_EVENT_PURE_AUTOTUNE_FLAG_WRITE_FINISH);
-#else
 		if (NoNeedAutoTune && (info->o_afe_ver!=info->afe_ver))
 		{
 			tsp_debug_info(true, info->dev, "%s: AFE_status(%d) write ( C2 0E )\n", __func__,bFinalAFE);
@@ -611,10 +597,7 @@ void fts_execute_autotune(struct fts_ts_info *info)
 			if (ret < 0)
 				tsp_debug_info(true, info->dev, "%s: Flash Back up PureAutotune Fail(Clear)\n", __func__);
 
-			msleep(20);
-			fts_fw_wait_for_event(info, STATUS_EVENT_PURE_AUTOTUNE_FLAG_ERASE_FINISH);
 		}
-#endif
 	} else {
 		tsp_debug_info(true, info->dev, "%s: AFE_status(%d) write ( C2 0E )\n", __func__,bFinalAFE);
 	    regData[0] = 0xC2;
@@ -623,8 +606,6 @@ void fts_execute_autotune(struct fts_ts_info *info)
 		if (ret < 0)
 			tsp_debug_info(true, info->dev, "%s: Flash Back up PureAutotune Fail(Clear)\n", __func__);
 
-		msleep(20);
-		fts_fw_wait_for_event(info, STATUS_EVENT_PURE_AUTOTUNE_FLAG_ERASE_FINISH);
 	}
 #endif
 
@@ -779,6 +760,7 @@ EXPORT_SYMBOL(fts_fw_updater);
 #define FW_IMAGE_NAME_D2_Z1			"tsp_stm/stm_z1.fw"
 #define FW_IMAGE_NAME_HERO2ILSIN		"tsp_stm/hero2i.fw"
 #define FW_IMAGE_NAME_HERO2ALPS			"tsp_stm/hero2a.fw"
+#define FW_IMAGE_NAME_HEROEDGE			"tsp_stm/hero_e.fw"
 
 #define CONFIG_ID_D1_S				0x2C
 #define CONFIG_ID_D2_TR				0x2E
@@ -845,12 +827,20 @@ int fts_fw_update_on_probe(struct fts_ts_info *info)
 
 				}
 */
-
-	if((lcdtype & LCD_ID2_MODEL_MASK) == MODEL_HEROPLUS){
+	/* for Valley Devices */
+	if((strncmp(info->board->project_name, "valley", 6) == 0)){
+		if (info->board->firmware_name){
+			tsp_debug_err(true, info->dev,"%s: V model, firmware name in dts\n", __func__);
+			info->firmware_name = info->board->firmware_name;
+		} else {
+			tsp_debug_err(true, info->dev,"%s: V model, firmware name is not in dts & skip!\n", __func__);
+			goto exit_fwload;
+		}
+	} else if((lcdtype & LCD_ID2_MODEL_MASK) == MODEL_HEROPLUS){
 		tsp_debug_err(true, info->dev,"%s:FTS7AD56 - HEROPLUS\n", __func__);
 		tspid2 = gpio_get_value(info->board->tspid2);
 		if (tspid2)
-			info->firmware_name = FW_IMAGE_NAME_HERO2ILSIN;
+			info->firmware_name = FW_IMAGE_NAME_HERO2ALPS;
 		else
 			info->firmware_name = FW_IMAGE_NAME_HERO2ALPS;
 
@@ -858,8 +848,10 @@ int fts_fw_update_on_probe(struct fts_ts_info *info)
 			tsp_debug_err(true, info->dev,"%s:firmware name exgist in dts\n", __func__);
 			info->firmware_name = info->board->firmware_name;
 		}
-	}
-	else {
+	} else if((lcdtype & LCD_ID2_MODEL_MASK) == MODEL_HEROEDGE){
+		tsp_debug_err(true, info->dev,"%s:FTS7AD56 - HEROEDGE\n", __func__);
+		info->firmware_name = FW_IMAGE_NAME_HEROEDGE;
+	} else {
 		tsp_debug_err(true, info->dev,"%s:FTS4 - ZERO\n", __func__);
 		goto exit_fwload;
 		info->firmware_name = FW_IMAGE_NAME_D2_Z2A;

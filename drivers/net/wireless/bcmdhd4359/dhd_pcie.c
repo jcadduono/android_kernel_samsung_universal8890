@@ -24,7 +24,7 @@
  *
  * <<Broadcom-WL-IPTag/Open:>>
  *
- * $Id: dhd_pcie.c 612549 2016-01-14 07:39:32Z $
+ * $Id: dhd_pcie.c 645077 2016-06-22 12:55:51Z $
  */
 
 
@@ -582,6 +582,16 @@ dhdpcie_dongle_attach(dhd_bus_t *bus)
 		goto fail;
 	}
 
+	/*
+	 * Checking PCI_SPROM_CONTROL register for preventing invalid address access
+	 * due to switch address space from PCI_BUS to SI_BUS.
+	 */
+	val = OSL_PCI_READ_CONFIG(osh, PCI_SPROM_CONTROL, sizeof(uint32));
+	if (val == 0xffffffff) {
+		DHD_ERROR(("%s : failed to read SPROM control register\n", __FUNCTION__));
+		goto fail;
+	}
+
 	/* si_attach() will provide an SI handle and scan the backplane */
 	if (!(bus->sih = si_attach((uint)devid, osh, regsva, PCI_BUS, bus,
 	                           &bus->vars, &bus->varsz))) {
@@ -812,14 +822,10 @@ dhdpcie_bus_remove_prep(dhd_bus_t *bus)
 	bus->dhd->busstate = DHD_BUS_DOWN;
 	DHD_GENERAL_UNLOCK(bus->dhd, flags);
 
-	dhd_os_sdlock(bus->dhd);
-
 	dhdpcie_bus_intr_disable(bus);
 	if (!bus->dhd->dongle_isolation) {
 		pcie_watchdog_reset(bus->osh, bus->sih, (sbpcieregs_t *)(bus->regs));
 	}
-
-	dhd_os_sdunlock(bus->dhd);
 
 	DHD_TRACE(("%s Exit\n", __FUNCTION__));
 }
@@ -1092,7 +1098,7 @@ static int concate_revision_bcm4358(dhd_bus_t *bus, char *fw_path, char *nv_path
 
 #if defined(SUPPORT_MULTIPLE_MODULE_CIS) && defined(USE_CID_CHECK)
 	if (chip_ver == 1 || chip_ver == 3) {
-		int ret = dhd_check_module_b85a(bus->dhd);
+		int ret = dhd_check_module_b85a();
 		if ((chip_ver == 1) && (ret < 0)) {
 			memset(chipver_tag, 0x00, sizeof(chipver_tag));
 			strcat(chipver_tag, "_b85");
@@ -1133,6 +1139,10 @@ static int concate_revision_bcm4359(dhd_bus_t *bus, char *fw_path, char *nv_path
 	} else if (chip_ver == 9) {
 		DHD_ERROR(("----- CHIP 4359 C0 -----\n"));
 		strncat(chipver_tag, "_c0", strlen("_c0"));
+#if defined(CONFIG_WLAN_GRACE) || defined(CONFIG_SEC_GRACEQLTE_PROJECT)
+		DHD_ERROR(("----- Adding _plus string -----\n"));
+		strncat(chipver_tag, "_plus", strlen("_plus"));
+#endif /* CONFIG_WLAN_GRACE || CONFIG_SEC_GRACEQLTE_PROJECT */
 	} else {
 		DHD_ERROR(("----- Unknown chip version, ver=%x -----\n", chip_ver));
 		return -1;
@@ -1140,7 +1150,7 @@ static int concate_revision_bcm4359(dhd_bus_t *bus, char *fw_path, char *nv_path
 
 #if defined(SUPPORT_MULTIPLE_MODULE_CIS) && defined(USE_CID_CHECK) && \
 	defined(SUPPORT_BCM4359_MIXED_MODULES)
-	module_type =  dhd_check_module_b90(bus->dhd);
+	module_type = dhd_check_module_b90();
 
 	switch (module_type) {
 		case BCM4359_MODULE_TYPE_B90B:
@@ -2128,6 +2138,7 @@ dhdpcie_mem_dump(dhd_bus_t *bus)
 			if (buf) {
 				MFREE(bus->dhd->osh, buf, size);
 			}
+			bus->dhd->memdump_success = FALSE;
 			return BCME_ERROR;
 		}
 		DHD_TRACE(("."));
@@ -2137,6 +2148,7 @@ dhdpcie_mem_dump(dhd_bus_t *bus)
 		start += read_size;
 		databuf += read_size;
 	}
+	bus->dhd->memdump_success = TRUE;
 
 	DHD_TRACE_HW4(("%s FUNC: Copy fw image to the embedded buffer \n", __FUNCTION__));
 
@@ -2337,7 +2349,7 @@ dhd_bus_schedule_queue(struct dhd_bus  *bus, uint16 flow_id, bool txs)
 
 				/* Restore to original priority for 802.1X packet */
 				if (prio == PRIO_8021D_NC) {
-					PKTSETPRIO(txp, PRIO_8021D_BE);
+					PKTSETPRIO(txp, dhdp->prio_8021x);
 				}
 			}
 #endif /* DHD_LOSSLESS_ROAMING */
@@ -2470,7 +2482,6 @@ int dhd_bus_console_in(dhd_pub_t *dhd, uchar *msg, uint msglen)
 
 	/* Don't allow input if dongle is in reset */
 	if (bus->dhd->dongle_reset) {
-		dhd_os_sdunlock(bus->dhd);
 		return BCME_NOTREADY;
 	}
 
@@ -3870,6 +3881,11 @@ dhdpcie_bus_suspend(struct dhd_bus *bus, bool state)
 		DHD_ERROR(("prot is not inited\n"));
 		return BCME_ERROR;
 	}
+
+	if (dhd_query_bus_erros(bus->dhd)) {
+		return BCME_ERROR;
+	}
+
 	DHD_GENERAL_LOCK(bus->dhd, flags);
 	if (bus->dhd->busstate != DHD_BUS_DATA && bus->dhd->busstate != DHD_BUS_SUSPEND) {
 		DHD_ERROR(("not in a readystate to LPBK  is not inited\n"));
@@ -3936,7 +3952,8 @@ dhdpcie_bus_suspend(struct dhd_bus *bus, bool state)
 				/* Read the Mb data to see if the Dongle has actually sent D3 ACK */
 				dhd_bus_cmn_readshared(bus, &d2h_mb_data, D2H_MB_DATA, 0);
 
-				if (d2h_mb_data & D2H_DEV_D3_ACK) {
+				if (!D2H_DEV_MB_INVALIDATED(d2h_mb_data) &&
+					(d2h_mb_data & D2H_DEV_D3_ACK)) {
 					DHD_ERROR(("*** D3 WAR for missing interrupt ***\r\n"));
 					/* Clear the MB Data */
 					dhd_bus_cmn_writeshared(bus, &zero, sizeof(uint32),
@@ -4001,6 +4018,7 @@ dhdpcie_bus_suspend(struct dhd_bus *bus, bool state)
 			dhdpcie_oob_intr_set(bus, TRUE);
 #endif /* BCMPCIE_OOB_HOST_WAKE */
 		} else if (timeleft == 0) {
+			bus->dhd->d3ack_timeout_occured = TRUE;
 			bus->dhd->d3ackcnt_timeout++;
 			DHD_ERROR(("%s: resumed on timeout for D3 ACK d3_inform_cnt %d \n",
 				__FUNCTION__, bus->dhd->d3ackcnt_timeout));
@@ -4389,10 +4407,10 @@ int
 dhdpcie_downloadvars(dhd_bus_t *bus, void *arg, int len)
 {
 	int bcmerror = BCME_OK;
-#ifdef KEEP_JP_REGREV
+#if defined(KEEP_KR_REGREV) || defined(KEEP_JP_REGREV)
 	char *tmpbuf;
 	uint tmpidx;
-#endif /* KEEP_JP_REGREV */
+#endif /* KEEP_KR_REGREV || KEEP_JP_REGREV */
 
 	DHD_TRACE(("%s: Enter\n", __FUNCTION__));
 
@@ -4420,7 +4438,7 @@ dhdpcie_downloadvars(dhd_bus_t *bus, void *arg, int len)
 	/* Copy the passed variables, which should include the terminating double-null */
 	bcopy(arg, bus->vars, bus->varsz);
 
-#ifdef KEEP_JP_REGREV
+#if defined(KEEP_KR_REGREV) || defined(KEEP_JP_REGREV)
 	if (bus->vars != NULL && bus->varsz > 0) {
 		char *pos = NULL;
 		tmpbuf = MALLOCZ(bus->dhd->osh, bus->varsz + 1);
@@ -4443,7 +4461,7 @@ dhdpcie_downloadvars(dhd_bus_t *bus, void *arg, int len)
 		}
 		MFREE(bus->dhd->osh, tmpbuf, bus->varsz + 1);
 	}
-#endif /* KEEP_JP_REGREV */
+#endif /* KEEP_KR_REGREV || KEEP_JP_REGREV */
 
 err:
 	return bcmerror;
@@ -4576,9 +4594,9 @@ void dhd_bus_dump(dhd_pub_t *dhdp, struct bcmstrbuf *strbuf)
 		dhdp->bus->h2d_mb_data_ptr_addr, dhdp->bus->d2h_mb_data_ptr_addr);
 	bcm_bprintf(strbuf, "dhd cumm_ctr %d\n", DHD_CUMM_CTR_READ(&dhdp->cumm_ctr));
 	bcm_bprintf(strbuf,
-		"%s %4s %2s %4s %17s %4s %4s %10s %4s %4s ",
+		"%s %4s %2s %4s %17s %4s %4s %10s %4s %4s %17s %17s %7s ",
 		"Num:", "Flow", "If", "Prio", ":Dest_MacAddress:", "Qlen", "CLen",
-		"Overflows", "RD", "WR");
+		"Overflows", "RD", "WR", "BASE(VA)", "BASE(PA)", "SIZE");
 	bcm_bprintf(strbuf, "%5s %6s %5s \n", "Acked", "tossed", "noack");
 
 	for (flowid = 0; flowid < dhdp->num_flow_rings; flowid++) {
@@ -4593,7 +4611,7 @@ void dhd_bus_dump(dhd_pub_t *dhdp, struct bcmstrbuf *strbuf)
 				DHD_CUMM_CTR_READ(DHD_FLOW_QUEUE_CLEN_PTR(&flow_ring_node->queue)),
 				DHD_FLOW_QUEUE_FAILURES(&flow_ring_node->queue));
 			dhd_prot_print_flow_ring(dhdp, flow_ring_node->prot_info, strbuf,
-				"%4d %4d ");
+				"%4d %4d %17p %8x:%8x %7d ");
 			bcm_bprintf(strbuf,
 				"%5s %6s %5s\n", "NA", "NA", "NA");
 		}
@@ -4879,7 +4897,7 @@ dhdpcie_handle_mb_data(dhd_bus_t *bus)
 	uint32 d2h_mb_data = 0;
 	uint32 zero = 0;
 	dhd_bus_cmn_readshared(bus, &d2h_mb_data, D2H_MB_DATA, 0);
-	if (!d2h_mb_data) {
+	if (D2H_DEV_MB_INVALIDATED(d2h_mb_data)) {
 		DHD_INFO_HW4(("%s: Invalid D2H_MB_DATA: 0x%08x\n",
 			__FUNCTION__, d2h_mb_data));
 		return;
@@ -4892,7 +4910,12 @@ dhdpcie_handle_mb_data(dhd_bus_t *bus)
 		DHD_ERROR(("FW trap has happened\n"));
 		dhdpcie_checkdied(bus, NULL, 0);
 		/* not ready yet dhd_os_ind_firmware_stall(bus->dhd); */
-		bus->dhd->busstate = DHD_BUS_DOWN;
+#ifdef SUPPORT_LINKDOWN_RECOVERY
+#ifdef CONFIG_ARCH_MSM
+		bus->no_cfg_restore = 1;
+#endif /* CONFIG_ARCH_MSM */
+#endif /* SUPPORT_LINKDOWN_RECOVERY */
+		dhd_os_check_hang(bus->dhd, 0, -EREMOTEIO);
 		return;
 	}
 	if (d2h_mb_data & D2H_DEV_DS_ENTER_REQ)  {
@@ -5411,6 +5434,10 @@ dhdpcie_chipmatch(uint16 vendor, uint16 device)
 
 	if ((device == BCM43596_D11AC_ID) || (device == BCM43596_D11AC2G_ID) ||
 		(device == BCM43596_D11AC5G_ID))
+		return 0;
+
+	if ((device == BCM43597_D11AC_ID) || (device == BCM43597_D11AC2G_ID) ||
+		(device == BCM43597_D11AC5G_ID))
 		return 0;
 
 

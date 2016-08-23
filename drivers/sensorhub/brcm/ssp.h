@@ -54,6 +54,11 @@
 #include <linux/muic/muic_notifier.h>
 #endif
 
+#if defined (CONFIG_SENSORS_SSP_VLTE)
+#include <linux/hall.h>
+#endif
+
+
 #ifdef CONFIG_HAS_EARLYSUSPEND
 #undef CONFIG_HAS_EARLYSUSPEND
 #endif
@@ -225,6 +230,11 @@ enum {
 #define MSG2SSP_AP_DATA_INJECTION_MODE_ON_OFF 0x41
 #define MSG2SSP_AP_DATA_INJECTION_SEND 0x42
 
+#define MSG2SSP_AP_SET_PROX_SETTING 		0x48
+#define MSG2SSP_AP_SET_LIGHT_COEF 		0x49
+#define MSG2SSP_AP_GET_LIGHT_COEF		0x50
+#define MSG2SSP_AP_SENSOR_PROX_ALERT_THRESHOLD 0x51
+
 #define MSG2SSP_AP_FUSEROM			0X01
 
 /* voice data */
@@ -262,16 +272,21 @@ enum {
 #define DEFUALT_CAL_HIGH_THRESHOLD		130
 #define DEFUALT_CAL_LOW_THRESHOLD		54
 #elif defined(CONFIG_SENSORS_SSP_TMD4905)/*CONFIG_SENSORS_SSP_PROX_AUTOCAL_AMS*/
-#define DEFUALT_HIGH_THRESHOLD			600
-#define DEFUALT_LOW_THRESHOLD			400
-#define DEFUALT_CAL_HIGH_THRESHOLD		8192
-#define DEFUALT_CAL_LOW_THRESHOLD		5000
+#define DEFUALT_HIGH_THRESHOLD				600
+#define DEFUALT_LOW_THRESHOLD				400
+#define DEFUALT_DETECT_HIGH_THRESHOLD		8192
+#define DEFUALT_DETECT_LOW_THRESHOLD		5000
+#elif defined(CONFIG_SENSORS_SSP_TMD4904)/*CONFIG_SENSORS_SSP_PROX_AUTOCAL_AMS*/
+#define DEFUALT_HIGH_THRESHOLD				420
+#define DEFUALT_LOW_THRESHOLD				290
+#define DEFUALT_DETECT_HIGH_THRESHOLD		16383
+#define DEFUALT_DETECT_LOW_THRESHOLD		5000
 #else /*CONFIG_SENSORS_SSP_TMD4903*/
 #ifdef CONFIG_SENSORS_SSP_PROX_AUTOCAL_AMS
-#define DEFUALT_HIGH_THRESHOLD			400
-#define DEFUALT_LOW_THRESHOLD			300
-#define DEFUALT_CAL_HIGH_THRESHOLD		8192
-#define DEFUALT_CAL_LOW_THRESHOLD		5000
+#define DEFUALT_HIGH_THRESHOLD				400
+#define DEFUALT_LOW_THRESHOLD				300
+#define DEFUALT_DETECT_HIGH_THRESHOLD		8192
+#define DEFUALT_DETECT_LOW_THRESHOLD		5000
 #else
 #define DEFUALT_HIGH_THRESHOLD			2000
 #define DEFUALT_LOW_THRESHOLD			1400
@@ -279,6 +294,8 @@ enum {
 #define DEFUALT_CAL_LOW_THRESHOLD		840
 #endif
 #endif
+
+#define DEFUALT_PROX_ALERT_HIGH_THRESHOLD			200
 
 /* SSP -> AP ACK about write CMD */
 #define MSG_ACK		0x80	/* ACK from SSP to AP */
@@ -379,7 +396,7 @@ enum {
 	PICKUP_GESTURE,
 	BULK_SENSOR,
 	GPS_SENSOR,
-
+	PROXIMITY_ALERT_SENSOR,
 	SENSOR_MAX,
 #ifdef CONFIG_SENSORS_SSP_HIFI_BATCHING
 	META_SENSOR = 200,
@@ -416,7 +433,9 @@ enum {
 	REPORT_MODE_ON_CHANGE, \
 	REPORT_MODE_ON_CHANGE, \
 	REPORT_MODE_ON_CHANGE, \
-	REPORT_MODE_CONTINUOUS, }
+	REPORT_MODE_CONTINUOUS, \
+	REPORT_MODE_UNKNOWN, \
+	REPORT_MODE_ON_CHANGE, }
 
 /* Unit : Byte - No including timestamp */
 #if defined(CONFIG_SENSORS_SSP_TMG399x)
@@ -435,7 +454,7 @@ enum {
 	2, 9, 0, 1, 1, \
 	12, 17, 17, 4, 0, \
 	0, 0, 0, 1, 12,\
-	6, 1, 6, }
+	6, 1, 6, 0, 0, 3, }
 #endif
 #endif
 
@@ -473,6 +492,10 @@ struct sensor_value {
 			u8 acc_rot;
 		};
 		struct {
+#ifdef CONFIG_SENSORS_SSP_LIGHT_REPORT_LUX
+			u32 lux;
+			s32 cct;
+#endif
 			u16 r;
 			u16 g;
 			u16 b;
@@ -501,9 +524,10 @@ struct sensor_value {
 		u8 sig_motion;
 #if defined(CONFIG_SENSORS_SSP_TMG399x)
 		u8 prox[4];
-#else	/* CONFIG_SENSORS_SSP_TMD4903, CONFIG_SENSORS_SSP_TMD3782 */
+#else	/* CONFIG_SENSORS_SSP_TMD4903, CONFIG_SENSORS_SSP_TMD3782, CONFIG_SENSORS_SSP_TMD4904 */
 		u16 prox[4];
 #endif
+		s16 prox_alert[4];
 		u8 data[20];
 		s32 pressure[3];
 		u32 step_diff;
@@ -639,6 +663,7 @@ struct ssp_data {
 	struct input_dev *light_ir_input_dev;
 #endif
 	struct input_dev *prox_input_dev;
+	struct input_dev *prox_alert_input_dev;
 	struct input_dev *grip_input_dev;
 	struct input_dev *temp_humi_input_dev;
 	struct input_dev *gesture_input_dev;
@@ -668,6 +693,7 @@ struct ssp_data {
 #endif	/* SSP_BBD_USE_SEND_WORK  */
 	struct i2c_client *client;
 	struct wake_lock ssp_wake_lock;
+	struct wake_lock ssp_comm_wake_lock;
 	struct timer_list debug_timer;
 	struct workqueue_struct *debug_wq;
 	struct work_struct work_debug;
@@ -686,7 +712,12 @@ struct ssp_data {
 	struct device *grip_device;
 	struct device *light_device;
 	struct device *ges_device;
+#ifdef SENSORS_SSP_IRLED
 	struct device *irled_device;
+#endif
+#ifdef CONFIG_SENSORS_SSP_LIGHT_COLORID
+	struct device *hiddenhole_device;
+#endif
 	struct device *temphumidity_device;
 #ifdef CONFIG_SENSORS_SSP_MOBEAM
 	struct device *mobeam_device;
@@ -715,12 +746,12 @@ struct ssp_data {
 	bool jig_is_attached;
 #endif
 
-
+	int light_coef[7];
 #if defined(CONFIG_SENSORS_SSP_PROX_AUTOCAL_AMS)
 	unsigned int uProxHiThresh;
 	unsigned int uProxLoThresh;
-	unsigned int uProxHiThresh_cal;
-	unsigned int uProxLoThresh_cal;
+	unsigned int uProxHiThresh_detect;
+	unsigned int uProxLoThresh_detect;
 #else
 	unsigned int uProxCanc;
 	unsigned int uCrosstalk;
@@ -732,6 +763,8 @@ struct ssp_data {
 	unsigned int uProxHiThresh_cal;
 	unsigned int uProxLoThresh_cal;
 #endif
+
+	unsigned int uProxAlertHiThresh;
 	unsigned int uIr_Current;
 	unsigned char uFuseRomData[3];
 	unsigned char uMagCntlRegData;
@@ -836,11 +869,8 @@ struct ssp_data {
 	struct mutex comm_mutex;
 	struct mutex pending_mutex;
 	struct mutex enable_mutex;
-	struct mutex ssp_enable_mutex; 
 
-#if defined(CONFIG_SENSORS_SSP_YAS532) || defined(CONFIG_SENSORS_SSP_YAS537)
 	s16 *static_matrix;
-#endif
 	struct list_head pending_list;
 
 	void (*ssp_big_task[BIG_TYPE_MAX])(struct work_struct *);
@@ -854,16 +884,26 @@ struct ssp_data {
 #endif
 	int acc_type;
 	int gyro_lib_state;
+	int mag_type;
 	
 	/* data for injection */
 	u8 data_injection_enable;
 	struct miscdevice ssp_data_injection_device;
 
+#if defined (CONFIG_SENSORS_SSP_VLTE)
+	struct notifier_block hall_ic_nb;
+	int change_axis;
+#endif
+
 #if defined(CONFIG_SSP_MOTOR)
 	int motor_state;
 #endif
-
+	char sensor_state[SENSOR_MAX + 1];
 };
+
+#if defined (CONFIG_SENSORS_SSP_VLTE)
+extern int folder_state;
+#endif
 
 struct ssp_big {
 	struct ssp_data *data;
@@ -903,7 +943,7 @@ void initialize_gyro_factorytest(struct ssp_data *);
 void initialize_pressure_factorytest(struct ssp_data *);
 void initialize_magnetic_factorytest(struct ssp_data *);
 void initialize_gesture_factorytest(struct ssp_data *data);
-#ifdef CONFIG_SENSORS_SSP_TMD4903
+#ifdef CONFIG_SENSORS_SSP_IRLED
 void initialize_irled_factorytest(struct ssp_data *data);
 #endif
 void initialize_temphumidity_factorytest(struct ssp_data *data);
@@ -914,7 +954,7 @@ void remove_light_factorytest(struct ssp_data *);
 void remove_pressure_factorytest(struct ssp_data *);
 void remove_magnetic_factorytest(struct ssp_data *);
 void remove_gesture_factorytest(struct ssp_data *data);
-#ifdef CONFIG_SENSORS_SSP_TMD4903
+#ifdef CONFIG_SENSORS_SSP_IRLED
 void remove_irled_factorytest(struct ssp_data *data);
 #endif
 void remove_temphumidity_factorytest(struct ssp_data *data);
@@ -963,10 +1003,17 @@ int set_glass_type(struct ssp_data *);
 int set_magnetic_static_matrix(struct ssp_data *);
 void sync_sensor_state(struct ssp_data *);
 void set_proximity_threshold(struct ssp_data *);
+void set_proximity_alert_threshold(struct ssp_data *data);
 void set_proximity_barcode_enable(struct ssp_data *, bool);
 void set_gesture_current(struct ssp_data *, unsigned char);
 int set_hall_threshold(struct ssp_data *data);
 void set_gyro_cal_lib_enable(struct ssp_data *, bool);
+void set_light_coef(struct ssp_data*);
+#ifdef CONFIG_SENSORS_SSP_LIGHT_COLORID
+int initialize_light_colorid(struct ssp_data*);
+void initialize_hiddenhole_factorytest(struct ssp_data*);
+void remove_hiddenhole_factorytest(struct ssp_data *);
+#endif
 int get_msdelay(int64_t);
 #if defined(CONFIG_SSP_MOTOR)
 int send_motor_state(struct ssp_data *);
@@ -995,6 +1042,7 @@ void report_light_ir_data(struct ssp_data *, struct sensor_value *);
 #endif
 void report_prox_data(struct ssp_data *, struct sensor_value *);
 void report_prox_raw_data(struct ssp_data *, struct sensor_value *);
+void report_prox_alert_data(struct ssp_data *data, struct sensor_value *proxdata);
 void report_grip_data(struct ssp_data *, struct sensor_value *);
 void report_geomagnetic_raw_data(struct ssp_data *, struct sensor_value *);
 void report_sig_motion_data(struct ssp_data *, struct sensor_value *);
@@ -1062,6 +1110,10 @@ int get_time(struct ssp_data *);
 #ifdef CONFIG_SENSORS_SSP_HIFI_BATCHING
 u64 get_current_timestamp(void);
 void ssp_reset_batching_resources(struct ssp_data *data);
+#endif
+
+#if defined (CONFIG_SENSORS_SSP_VLTE)
+int ssp_ckeck_lcd(int);
 #endif
 
 #endif

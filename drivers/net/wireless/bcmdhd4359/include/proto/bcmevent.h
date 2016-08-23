@@ -26,7 +26,7 @@
  *
  * <<Broadcom-WL-IPTag/Open:>>
  *
- * $Id: bcmevent.h 617327 2016-02-05 01:47:54Z $
+ * $Id: bcmevent.h 641920 2016-06-06 21:33:06Z $
  *
  */
 
@@ -43,6 +43,9 @@
 #endif
 /* #include <ethernet.h> -- TODO: req., excluded to overwhelming coupling (break up ethernet.h) */
 #include <proto/bcmeth.h>
+#ifdef HEALTH_CHECK
+#include <proto/dnglevent.h>
+#endif /* HEALTH_CHECK */
 
 /* This marks the start of a packed structure section. */
 #include <packed_section_start.h>
@@ -96,6 +99,19 @@ typedef BWL_PRE_PACKED_STRUCT struct bcm_event {
 	wl_event_msg_t		event;
 	/* data portion follows */
 } BWL_POST_PACKED_STRUCT bcm_event_t;
+
+/*
+ * used by host event
+ * note: if additional event types are added, it should go with is_wlc_event_frame() as well.
+ */
+typedef union bcm_event_msg_u {
+	wl_event_msg_t		event;
+#ifdef HEALTH_CHECK
+	bcm_dngl_event_msg_t	dngl_event;
+#endif /* HEALTH_CHECK */
+
+	/* add new event here */
+} bcm_event_msg_u_t;
 
 #define BCM_MSG_LEN	(sizeof(bcm_event_t) - sizeof(bcmeth_hdr_t) - sizeof(struct ether_header))
 
@@ -252,15 +268,31 @@ typedef BWL_PRE_PACKED_STRUCT struct bcm_event {
 #define WLC_E_TKO			151     /* TCP keepalive offload */
 #define WLC_E_SDB_TRANSITION            152     /* SDB mode-switch event */
 #define WLC_E_NATOE_NFCT		153     /* natoe event */
-#define WLC_E_LAST			154	/* highest val + 1 for range checking */
-#if (WLC_E_LAST > 154)
-#error "WLC_E_LAST: Invalid value for last event; must be <= 153."
+#define WLC_E_TEMP_THROTTLE		154	/* Temperature throttling control event */
+#define WLC_E_LINK_QUALITY		155     /* Link quality measurement complete */
+#define WLC_E_BSSTRANS_RESP		156 /* BSS Transition Response received */
+#define WLC_E_HE_TWT_SETUP		157	/* HE TWT Setup Complete event */
+#define WLC_E_NAN_DATA_IND		158	/* NAN 2.0 data indication */
+#define WLC_E_NAN_DATA_CONF		159	/* NAN 2.0 data confirmation */
+#define WLC_E_RADAR_DETECTED		160	/* Radar Detected event */
+#define WLC_E_RANGING_EVENT		161	/* Ranging event */
+#define WLC_E_INVALID_IE		162	/* Received invalid IE */
+#define WLC_E_LAST			163	/* highest val + 1 for range checking */
+#if (WLC_E_LAST > 163)
+#error "WLC_E_LAST: Invalid value for last event; must be <= 163."
 #endif /* WLC_E_LAST */
 
 /* define an API for getting the string name of an event */
 extern const char *bcmevent_get_name(uint event_type);
 extern void wl_event_to_host_order(wl_event_msg_t * evt);
 extern void wl_event_to_network_order(wl_event_msg_t * evt);
+
+/* validate if the event is proper and if valid copy event header to event */
+extern int is_wlc_event_frame(void *pktdata, wl_event_msg_t *event,
+	uint pktlen);
+
+extern int is_wlc_event_frame_tmp(void *pktdata, uint pktlen, uint16 exp_usr_subtype,
+	bcm_event_msg_u_t *out_event);
 
 /* conversion between host and network order for events */
 void wl_event_to_host_order(wl_event_msg_t * evt);
@@ -382,6 +414,9 @@ typedef struct wl_event_sdb_trans {
 #define WLC_E_SUP_SEND_FAIL		13	/* message send failure */
 #define WLC_E_SUP_DEAUTH		14	/* received FC_DEAUTH */
 #define WLC_E_SUP_WPA_PSK_TMO		15	/* WPA PSK 4-way handshake timeout */
+#define WLC_E_SUP_WPA_PSK_M1_TMO	16	/* WPA PSK 4-way handshake M1 timeout */
+#define WLC_E_SUP_WPA_PSK_M3_TMO	17	/* WPA PSK 4-way handshake M3 timeout */
+
 
 /* Ucode reason codes carried in the WLC_E_MACDBG event */
 #define WLC_E_MACDBG_LIST_PSM		0	/* Dump list update for PSM registers */
@@ -436,9 +471,7 @@ typedef struct wl_event_data_natoe {
 #define WLC_E_IF_ROLE_BTA_ACCEPTOR	6	/* BT-AMP Acceptor */
 #endif
 #define WLC_E_IF_ROLE_IBSS              8       /* IBSS */
-#ifdef WL_NAN
-#define WLC_E_IF_ROLE_NAN               9       /* NAN */
-#endif
+#define WLC_E_IF_ROLE_NAN              9       /* NAN */
 
 /* WLC_E_RSSI event data */
 typedef struct wl_event_data_rssi {
@@ -496,6 +529,9 @@ typedef BWL_PRE_PACKED_STRUCT struct ndis_link_parms {
 #define WLAN_TDLS_SET_WFD_ENABLED	13
 #define WLAN_TDLS_SET_WFD_DISABLED	14
 #endif
+
+/* WLC_E_RANGING_EVENT subtypes */
+#define WLC_E_RANGING_RESULTS	0
 
 
 /* GAS event data */
@@ -652,6 +688,12 @@ typedef enum nan_app_events {
 	WL_NAN_EVENT_POST_DISC = 17, /* Event for post discovery data */
 	WL_NAN_EVENT_DATA_IF_ADD = 18, /* Event for Data IF add */
 	WL_NAN_EVENT_DATA_PEER_ADD = 19, /* Event for peer add */
+	/* nan 2.0 */
+	WL_NAN_EVENT_DATA_IND = 20, /* Data Indication to Host */
+	WL_NAN_EVENT_DATA_CONF = 21, /* Data Response to Host */
+	WL_NAN_EVENT_SDF_RX = 22,	/* entire service discovery frame */
+	WL_NAN_EVENT_DATA_END = 23,
+	WL_NAN_EVENT_BCN_RX = 24,	/* received beacon payload */
 	WL_NAN_EVENT_INVALID	/* delimiter for max value */
 } nan_app_events_e;
 
@@ -661,6 +703,7 @@ typedef enum nan_app_events {
 /* WLC_E_ULP event data */
 #define WL_ULP_EVENT_VERSION		1
 #define WL_ULP_DISABLE_CONSOLE		1	/* Disable console message on ULP entry */
+#define WL_ULP_UCODE_DOWNLOAD		2       /* Download ULP ucode file */
 
 typedef struct wl_ulp_event {
 	uint16 version;
@@ -673,6 +716,57 @@ typedef BWL_PRE_PACKED_STRUCT struct wl_event_tko {
 	uint8 pad[3];		/* 4-byte struct alignment */
 } BWL_POST_PACKED_STRUCT wl_event_tko_t;
 
+typedef struct {
+	uint8 radar_type;       /* one of RADAR_TYPE_XXX */
+	uint16 min_pw;          /* minimum pulse-width (usec * 20) */
+	uint16 max_pw;          /* maximum pulse-width (usec * 20) */
+	uint16 min_pri;         /* minimum pulse repetition interval (usec) */
+	uint16 max_pri;         /* maximum pulse repetition interval (usec) */
+	uint16 subband;         /* subband/frequency */
+} radar_detected_event_info_t;
+typedef struct wl_event_radar_detect_data {
+
+	uint32 version;
+	uint16 current_chanspec; /* chanspec on which the radar is recieved */
+	uint16 target_chanspec; /*  Target chanspec after detection of radar on current_chanspec */
+	radar_detected_event_info_t radar_info[2];
+} wl_event_radar_detect_data_t;
+
+/* TWT Setup Completion is designed to notify the user of TWT Setup process
+ * status. When 'status' field is value of BCME_OK, the user must check the
+ * 'setup_cmd' field value in 'wl_twt_sdesc_t' structure that at the end of
+ * the event data to see the response from the TWT Responding STA; when
+ * 'status' field is value of BCME_ERROR or non BCME_OK, user must not use
+ * anything from 'wl_twt_sdesc_t' structure as it is the TWT Requesting STA's
+ * own TWT parameter.
+ */
+
+#define WL_TWT_SETUP_CPLT_VER	0
+
+/* TWT Setup Completion event data */
+typedef struct wl_twt_setup_cplt {
+	uint16 version;
+	uint16 length;	/* the byte count of fields from 'dialog' onwards */
+	uint8 dialog;	/* the dialog token user supplied to the TWT setup API */
+	uint8 pad[3];
+	int32 status;
+	/* wl_twt_sdesc_t desc; - defined in wlioctl.h */
+} wl_twt_setup_cplt_t;
+
+#define WL_INVALID_IE_EVENT_VERSION	0
+
+/* Invalid IE Event data */
+typedef struct wl_invalid_ie_event {
+	uint16 version;
+	uint16 len;      /* Length of the invalid IE copy */
+	uint16 type;     /* Type/subtype of the frame which contains the invalid IE */
+	uint16 error;    /* error code of the wrong IE, defined in ie_error_code_t */
+	uint8  ie[];     /* Variable length buffer for the invalid IE copy */
+} wl_invalid_ie_event_t;
+
+typedef enum ie_error_code {
+	IE_ERROR_OUT_OF_RANGE = 0x01
+} ie_error_code_t;
 /* This marks the end of a packed structure section. */
 #include <packed_section_end.h>
 

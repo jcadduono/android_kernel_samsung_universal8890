@@ -153,3 +153,17 @@ INT32 bdev_sync(struct super_block *sb)
 
 	return sync_blockdev(sb->s_bdev);
 }
+
+INT32 bdev_reada(struct super_block *sb, UINT32 secno, UINT32 num_secs)
+{
+	BD_INFO_T *p_bd = &(EXFAT_SB(sb)->bd_info);
+	int i;
+
+	if (!p_bd->opened)
+		return (FFS_MEDIAERR);
+
+	for (i = 0; i < num_secs; i++)
+		__breadahead(sb->s_bdev, secno + i, 1 << sb->s_blocksize_bits);
+
+	return 0;
+}

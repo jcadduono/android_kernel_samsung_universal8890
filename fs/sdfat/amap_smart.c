@@ -467,14 +467,13 @@ int amap_create(struct super_block *sb, u32 pack_ratio, u32 sect_per_au, u32 hid
 	*/
 	
 	/* Parse FAT table */
-	for (i_clu = 2; i_clu < fsi->num_clusters; i_clu++){
+	for (i_clu = CLUS_BASE; i_clu < fsi->num_clusters; i_clu++){
 		u32 clu_data;
 		AU_INFO_T *au;
 
 		if (fat_ent_get(sb, i_clu, &clu_data)) {
-			sdfat_msg(sb, KERN_ERR, "Failed to read fat entry(%u)\n"
-									,i_clu); 
-
+			sdfat_msg(sb, KERN_ERR,
+				"failed to read fat entry(%u)\n", i_clu);
 			goto free_and_eio;
 		}
 		
@@ -942,7 +941,7 @@ static inline int amap_skip_cluster(struct super_block *sb, TARGET_AU_T *cur, in
 	clu = CLU_of_i_AU(amap, cur->au->idx, cur->idx);
 
 	while (num_to_skip > 0) {
-		if (clu >= 2) {
+		if (clu >= CLUS_BASE) {
 			/* Cf.
 			 * If AMAP's integrity is okay,
 			 * we don't need to check if (clu < fsi->num_clusters) 
@@ -953,7 +952,6 @@ static inline int amap_skip_cluster(struct super_block *sb, TARGET_AU_T *cur, in
 
 			if (IS_CLUS_FREE(read_clu))
 				num_to_skip--;
-
 		}
 
 		// Move clu->idx

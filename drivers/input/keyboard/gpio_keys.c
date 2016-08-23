@@ -56,6 +56,10 @@ bool wakeup_by_key(void) {
 }
 EXPORT_SYMBOL(wakeup_by_key);
 
+#if defined(CONFIG_FB) && defined(CONFIG_SENSORS_VFS7XXX)
+extern void vfsspi_fp_homekey_ev(void);
+#endif
+
 struct gpio_button_data {
 	struct gpio_keys_button *button;
 	struct input_dev *input;
@@ -367,6 +371,8 @@ static ssize_t key_pressed_show(struct device *dev,
 	else
 		sprintf(buf, "RELEASE");
 
+	pr_info("%s key state:%d\n", SECLOG, keystate);
+
 	return strlen(buf);
 }
 
@@ -388,6 +394,8 @@ static ssize_t key_pressed_show_code(struct device *dev,
 	}
 
 	sprintf(buf, "%d %d %d", volume_up, volume_down, power);
+
+	pr_info("%s volup:%d, voldown:%d, power:%d\n", SECLOG, volume_up, volume_down, power);
 
 	return strlen(buf);
 }
@@ -448,14 +456,6 @@ static void gpio_keys_gpio_report_event(struct gpio_button_data *bdata)
 	unsigned int type = button->type ?: EV_KEY;
 	int state = (gpio_get_value_cansleep(button->gpio) ? 1 : 0) ^ button->active_low;
 
-	if ((button->code == KEY_POWER) && !!state) {
-		printk(KERN_INFO "PWR key is pressed\n");
-	}
-
-	if ((button->code == KEY_HOMEPAGE) && !!state) {
-		printk(KERN_INFO "HOME key is pressed\n");
-	}
-
 	exynos_ss_check_crash_key(button->code, state);
 
 	if (type == EV_ABS) {
@@ -464,9 +464,15 @@ static void gpio_keys_gpio_report_event(struct gpio_button_data *bdata)
 	} else {
 		bdata->key_state = !!state;
 		input_event(input, type, button->code, !!state);
+#if defined(CONFIG_FB) && defined(CONFIG_SENSORS_VFS7XXX)
+		if(button->code == KEY_HOMEPAGE && !!state == 1)
+			vfsspi_fp_homekey_ev();
+#endif
 	}
 
 	input_sync(input);
+
+	pr_info("%s %s: %d, %d, %d\n", SECLOG, __func__, button->code, button->value, state);
 }
 
 static void gpio_keys_gpio_work_func(struct work_struct *work)
@@ -504,7 +510,7 @@ static irqreturn_t gpio_keys_gpio_isr(int irq, void *dev_id)
 	if (suspend_state) {
 		irq_in_suspend = true;
 		wakeup_reason = bdata->button->code;
-		pr_info("%s before resume by %d\n", __func__, wakeup_reason);
+		pr_info("%s %s: before resume by %d\n", SECLOG, __func__, wakeup_reason);
 	}
 
 	if (bdata->button->wakeup)

@@ -28,10 +28,19 @@
 #include <linux/proc_fs.h>
 #include <linux/jiffies.h>
 
+#if defined(CONFIG_BATTERY_NOTIFIER)
+#include <linux/battery/battery_notifier.h>
+#endif /* CONFIG_BATTERY_NOTIFIER */
+
+#if defined(CONFIG_CCIC_NOTIFIER)
+#include <linux/ccic/ccic_notifier.h>
+#endif /* CONFIG_CCIC_NOTIFIER */
+
 #if defined(CONFIG_MUIC_NOTIFIER)
 #include <linux/muic/muic.h>
 #include <linux/muic/muic_notifier.h>
 #endif /* CONFIG_MUIC_NOTIFIER */
+
 #if defined(CONFIG_VBUS_NOTIFIER)
 #include <linux/vbus_notifier.h>
 #endif
@@ -82,6 +91,10 @@ struct adc_sample_info {
 struct sec_battery_info {
 	struct device *dev;
 	sec_battery_platform_data_t *pdata;
+#if defined(CONFIG_CCIC_NOTIFIER)
+	bool pdic_attach;
+	struct pdic_notifier_struct pdic_info;
+#endif
 	/* power supply used in Android */
 	struct power_supply psy_bat;
 	struct power_supply psy_usb;
@@ -91,6 +104,9 @@ struct sec_battery_info {
 	unsigned int irq;
 
 	struct notifier_block batt_nb;
+#if defined(CONFIG_BATTERY_NOTIFIER)
+	struct notifier_block pdic_nb;
+#endif
 #if defined(CONFIG_VBUS_NOTIFIER)
 	struct notifier_block vbus_nb;
 #endif
@@ -296,6 +312,7 @@ struct sec_battery_info {
 	int batt_cycle;
 #endif
 #if defined(CONFIG_STEP_CHARGING)
+	unsigned int step_charging_type;
 	int step_charging_status;
 	int step_charging_step;
 #endif
@@ -350,6 +367,7 @@ enum {
 	BATT_VOL_ADC_AVER,
 	BATT_CURRENT_UA_NOW,
 	BATT_CURRENT_UA_AVG,
+	BATT_FILTER_CFG,
 	BATT_TEMP,
 	BATT_TEMP_ADC,
 	BATT_TEMP_AVER,

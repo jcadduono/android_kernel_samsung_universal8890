@@ -180,3 +180,9 @@ config WLAN_HERO2
 	depends on BROADCOM_WIFI
 	---help---
 	  This is configuration for USA regrev
+
+config WLAN_GRACE
+	bool "model code for grace"
+	depends on BROADCOM_WIFI
+	---help---
+	  This is configuration for Grace feature

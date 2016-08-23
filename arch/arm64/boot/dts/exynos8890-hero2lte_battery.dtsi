@@ -70,6 +70,7 @@
 			battery,wpc_cc_cv_vout = <5500>;
 			battery,wpc_cv_call_vout = <5000>;
 			battery,wpc_cc_call_vout = <5000>;
+			battery,hv_vout_wa = <0x41>; /* WC vout 10.0V */
 		};
 	};
 

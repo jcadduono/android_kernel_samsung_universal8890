@@ -211,3 +211,9 @@ config CAMERA_SENSOR_3P3_OBJ
         default n
         help
           Use to build 3P3 camera sensor.
+ config CAMERA_SENSOR_5E6_OBJ
+        bool "Use 5E6 camera sensor"
+        depends on CAMERA_MODULE_SELECT
+        default n
+        help
+          Use to build 5E6 camera sensor.

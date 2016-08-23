@@ -24,7 +24,7 @@
  *
  * <<Broadcom-WL-IPTag/Open:>>
  *
- * $Id: dhd_pcie_linux.c 610510 2016-01-07 05:46:48Z $
+ * $Id: dhd_pcie_linux.c 644989 2016-06-22 05:39:56Z $
  */
 
 
@@ -627,6 +627,9 @@ int dhdpcie_get_resource(dhdpcie_info_t *dhdpcie_info)
 	ulong bar1_size;
 	struct pci_dev *pdev = NULL;
 	pdev = dhdpcie_info->dev;
+#ifdef EXYNOS_PCIE_MODULE_PATCH
+	pci_restore_state(pdev);
+#endif /* EXYNOS_MODULE_PATCH */
 	do {
 		if (pci_enable_device(pdev)) {
 			printf("%s: Cannot enable PCI device\n", __FUNCTION__);
@@ -673,6 +676,10 @@ int dhdpcie_get_resource(dhdpcie_info_t *dhdpcie_info)
 			}
 		}
 #endif /* LINUX_VERSION_CODE >= KERNEL_VERSION(3, 0, 0) */
+
+#ifdef EXYNOS_PCIE_MODULE_PATCH
+		pci_save_state(pdev);
+#endif /* EXYNOS_MODULE_PATCH */
 
 		DHD_TRACE(("%s:Phys addr : reg space = %p base addr 0x"PRINTF_RESOURCE" \n",
 			__FUNCTION__, dhdpcie_info->regs, bar0_addr));

@@ -15,11 +15,14 @@
 #include <asm/cacheflush.h>
 #include <asm/page.h>
 
+#ifdef CONFIG_FB_DSU
+#include <linux/ion.h>
+#endif
+
 #include "decon.h"
 #include "dsim.h"
 #include "./vpp/vpp.h"
 #include "decon_helper.h"
-#include "./panels/lcd_ctrl.h"
 #include <video/mipi_display.h>
 
 extern void *return_address(int);
@@ -692,13 +695,593 @@ void DISP_SS_EVENT_SHOW(struct seq_file *s, struct decon_device *decon)
 void DISP_SS_EVENT_SIZE_ERR_LOG(struct v4l2_subdev *sd, struct disp_ss_size_info *info)
 {
 	struct decon_device *decon = container_of(sd, struct decon_device, sd);
-	int idx = (decon->disp_ss_size_log_idx++) % DISP_EVENT_SIZE_ERR_MAX;
-	struct disp_ss_size_err_info *log = &decon->disp_ss_size_log[idx];
+	int idx = 0;
+	struct disp_ss_size_err_info *log = NULL;
 
 	if (!decon)
 		return;
-
+	idx = (decon->disp_ss_size_log_idx++) % DISP_EVENT_SIZE_ERR_MAX;
+	log = &decon->disp_ss_size_log[idx];
 	log->time = ktime_get();
 	memcpy(&log->info, info, sizeof(struct disp_ss_size_info));
 }
 #endif
+
+#ifdef CONFIG_FB_DSU
+static char logBuffer[10][1024];
+static char* logLast;
+static int logCnt = 0;
+
+void decon_get_window_rect_log( char* buffer, struct decon_device *decon, struct decon_win_config_data *win_data )
+{
+	struct decon_win_config *win_config = win_data->config;
+	char* cPos = buffer;
+	int i;
+
+	cPos += sprintf( cPos, "DSU window.%llu:", ktime_to_ms(ktime_get()) );
+
+	cPos += sprintf( cPos, "[%d-%d,dst[%4d,%4d,%4d,%4d],rect[%4d,%4d,%4d,%4d]] ",
+		DECON_WIN_UPDATE_IDX, win_config[DECON_WIN_UPDATE_IDX].enableDSU,
+		win_config[DECON_WIN_UPDATE_IDX].dst.x, win_config[DECON_WIN_UPDATE_IDX].dst.y, win_config[DECON_WIN_UPDATE_IDX].dst.w, win_config[DECON_WIN_UPDATE_IDX].dst.h,
+		win_config[DECON_WIN_UPDATE_IDX].left, win_config[DECON_WIN_UPDATE_IDX].top, win_config[DECON_WIN_UPDATE_IDX].right, win_config[DECON_WIN_UPDATE_IDX].bottom );
+
+	for (i = 0; i < decon->pdata->max_win; i++) {
+		if( win_config[i].dst.x || win_config[i].dst.y || win_config[i].dst.w || win_config[i].dst.h||
+			win_config[i].src.x || win_config[i].src.y || win_config[i].src.w || win_config[i].src.h ) {
+			cPos += sprintf( cPos, "(%d.%d-src(%4d,%4d,%4d,%4d),dst(%4d,%4d,%4d,%4d)) ", i, win_config[i].state,
+				win_config[i].src.x, win_config[i].src.y, win_config[i].src.w, win_config[i].src.h,
+				win_config[i].dst.x, win_config[i].dst.y, win_config[i].dst.w, win_config[i].dst.h );
+		}
+	}
+}
+
+
+void decon_store_window_rect_log( struct decon_device *decon, struct decon_win_config_data *win_data )
+{
+	decon_get_window_rect_log( &(logBuffer[logCnt][0]), decon, win_data);
+	logLast = &(logBuffer[logCnt][0]);
+
+	logCnt++;
+	if( logCnt >= 10 ) logCnt = 0;
+}
+
+char* decon_last_window_rect_log( void )
+{
+	return logLast;
+}
+
+void decon_print_bufered_window_rect_log( void )
+{
+	int i;
+
+	for( i = logCnt; i < 10; i++ ) pr_info( "(history) %s\n", logBuffer[i] );
+	for( i = 0; i < logCnt; i++ ) pr_info( "(history) %s\n", logBuffer[i] );
+}
+
+
+static inline bool is_rgb32(int format)
+{
+	switch (format) {
+	case DECON_PIXEL_FORMAT_ARGB_8888:
+	case DECON_PIXEL_FORMAT_ABGR_8888:
+	case DECON_PIXEL_FORMAT_RGBA_8888:
+	case DECON_PIXEL_FORMAT_BGRA_8888:
+	case DECON_PIXEL_FORMAT_XRGB_8888:
+	case DECON_PIXEL_FORMAT_XBGR_8888:
+	case DECON_PIXEL_FORMAT_RGBX_8888:
+	case DECON_PIXEL_FORMAT_BGRX_8888:
+		return true;
+	default:
+		return false;
+	}
+}
+
+int decon_bmpbuffer_log_window(struct decon_device *decon, struct decon_reg_data *regs, int *old_plane_cnt)
+{
+	char buffer[256];
+	char* cp;
+	int i, j;
+
+	int x, y;
+	int width, height;
+	int jump;
+
+	void *g_vaddr;
+	u8* addr;
+	u8* ppixel;
+
+	u8 r,g,b;
+	int pixel;
+	int bytes_per_pixel;
+//	char gradation[] = { ' ', '.', ':', '-', '=', '|', 'i', 'I', 'o', 'd', 'W', 'Q', '0', '*', '#', '$' };
+	char gradation[] = { '$', '#', '*', '0', 'Q', 'W', 'd', 'o', 'I', 'i', '|', '=', '-', '^', ':', '.' };
+
+	for (i = 0; i < decon->pdata->max_win; i++) {
+		for (j = 0; j < old_plane_cnt[i]; ++j) {
+			if( regs->dma_buf_data[i][j].dma_addr) {
+
+				g_vaddr = ion_map_kernel( decon->ion_client, regs->dma_buf_data[i][j].ion_handle );
+
+				width = regs->vpp_config[i].src.w;
+				height = regs->vpp_config[i].src.h;
+				jump = width/60;
+				if( height/60/2 > jump ) jump = height/80/2;
+				if( jump < 1 ) jump = 1;
+
+				if( is_rgb32( regs->vpp_config[i].format ) ) bytes_per_pixel = 4;
+				else switch( regs->vpp_config[i].format ) {
+					case DECON_PIXEL_FORMAT_RGBA_5551:
+					case DECON_PIXEL_FORMAT_RGB_565:
+						bytes_per_pixel = 2;
+					break;
+					default:
+						bytes_per_pixel = 3;
+					break;
+				}
+
+				pr_info( "dsu_bitmap: dma_buf[%d][%d], src(x,y,w,h,f_w,f_h=%dx%d,%dx%d,%dx%d), dst(x,y,w,h,f_w,f_h=%dx%d,%dx%d,%dx%d), %d,%d\n", i, j,
+					regs->vpp_config[i].src.x, regs->vpp_config[i].src.y,
+					regs->vpp_config[i].src.w, regs->vpp_config[i].src.h,
+					regs->vpp_config[i].src.f_w, regs->vpp_config[i].src.f_h,
+					regs->vpp_config[i].dst.x, regs->vpp_config[i].dst.y,
+					regs->vpp_config[i].dst.w, regs->vpp_config[i].dst.h,
+					regs->vpp_config[i].dst.f_w, regs->vpp_config[i].dst.f_h,
+					regs->vpp_config[i].format, bytes_per_pixel );
+
+				for( y = 0; y < height; y+= jump*2 ) {
+					cp = buffer;
+					cp += sprintf( cp, "%4d.", y );
+					addr = (u8*)g_vaddr +y*width*bytes_per_pixel;
+					ppixel = addr;
+					for( x=0; x<width; x+=jump ) {
+						switch( regs->vpp_config[i].format ) {
+						case DECON_PIXEL_FORMAT_XRGB_8888:
+						case DECON_PIXEL_FORMAT_ARGB_8888:
+							r = ppixel[1]; g = ppixel[2]; b=ppixel[3];
+							pixel = (r+g+b)/3/16;
+							break;
+						case DECON_PIXEL_FORMAT_XBGR_8888:
+						case DECON_PIXEL_FORMAT_ABGR_8888:
+							r = ppixel[3]; g = ppixel[2]; b=ppixel[1];
+							pixel = (r+g+b)/3/16;
+							break;
+						case DECON_PIXEL_FORMAT_RGBA_8888:
+						case DECON_PIXEL_FORMAT_RGBX_8888:
+							r = ppixel[0]; g = ppixel[1]; b=ppixel[2];
+							pixel = (r+g+b)/3/16;
+							break;
+						case DECON_PIXEL_FORMAT_BGRX_8888:
+						case DECON_PIXEL_FORMAT_BGRA_8888:
+							r = ppixel[2]; g = ppixel[1]; b=ppixel[0];
+							pixel = (r+g+b)/3/16;
+							break;
+						/* RGB 16 bit */
+						case DECON_PIXEL_FORMAT_RGBA_5551:
+							r = ppixel[0]>>3; g = ((ppixel[0]&0x7)<<2) +(ppixel[1]>>6); b = (ppixel[1]&0x3E)>>1;
+							r *=8; g*=8; b*=8;
+							pixel = (r+g+b)/3/16;
+							break;
+						case DECON_PIXEL_FORMAT_RGB_565:
+							r = ppixel[0]>>3; g = ((ppixel[0]&0x7)<<3) +(ppixel[1]>>5); b = ppixel[1]&0x1E;
+							r *=8; g*=4; b*=8;
+							pixel = (r+g+b)/3/16;
+							break;
+						/* YUV422 2P */
+						case DECON_PIXEL_FORMAT_NV16:
+						case DECON_PIXEL_FORMAT_NV61:
+						/* YUV420 2P */
+						case DECON_PIXEL_FORMAT_NV12:
+						case DECON_PIXEL_FORMAT_NV21:
+						case DECON_PIXEL_FORMAT_NV12M:
+						case DECON_PIXEL_FORMAT_NV21M:
+							r = ppixel[0]; g = ppixel[0]; b = ppixel[0];
+							pixel = ppixel[0] /16;
+							break;
+						/* YUV422 3P */
+						case DECON_PIXEL_FORMAT_YVU422_3P:
+						/* YUV420 3P */
+						case DECON_PIXEL_FORMAT_YUV420:
+						case DECON_PIXEL_FORMAT_YVU420:
+						case DECON_PIXEL_FORMAT_YUV420M:
+						case DECON_PIXEL_FORMAT_YVU420M:
+							r = ppixel[0]; g = ppixel[0]; b = ppixel[0];
+							pixel = ppixel[0] /16;
+							break;
+						/* YUV - support for single plane */
+						case DECON_PIXEL_FORMAT_NV12N:
+						case DECON_PIXEL_FORMAT_NV12N_10B:
+						default:
+							r = ppixel[0]; g = ppixel[0]; b = ppixel[0];
+							pixel = ppixel[0] /16;
+							break;
+						break;
+						}
+
+						cp[0] = gradation[ pixel ];
+						cp++;
+						ppixel += bytes_per_pixel *jump;
+					}
+					cp[0] = 0;
+					pr_info( "dsu_bitmap:%s\n", buffer );
+				}
+
+			}
+		}
+	}
+
+	return 0;
+}
+
+
+
+typedef struct decon_buf_header decon_framebuffer;
+struct decon_buf_header {
+	int timestamp;
+	struct decon_frame		src;
+	struct decon_frame		dst;
+	int width;
+	int height;
+	int plane_id;
+	u8 *rgb_buffer;
+	int buffer_size;
+};
+
+#define DECON_DSU_BUFFER_MAX		(24)
+#define DECON_DSU_BUFFER_SIZE		(131072)
+#define DECON_DSU_BUFFER_ZOOM_OUT_X	(10)
+#define DECON_DSU_BUFFER_ZOOM_OUT_Y	(10)
+#define DECON_DSU_BUFFER_BYTES_PER_PIXEL	(3)
+static decon_framebuffer decon_dsu_buffer_info[DECON_DSU_BUFFER_MAX];
+static int decon_dsu_buffer_info_cnt = 0;
+static int decon_bmpbuffer_store_timer = 0;
+
+
+void decon_bmpbuffer_settimer( int value )
+{
+	decon_bmpbuffer_store_timer = value;
+}
+
+
+int decon_bmpbuffer_gettimer( void )
+{
+	return decon_bmpbuffer_store_timer;
+}
+
+int decon_bmpbuffer_is_storetime( void )
+{
+	return (decon_bmpbuffer_store_timer > 0);
+}
+
+
+void decon_bmpbuffer_clear( void )
+{
+	int i;
+
+	for( i = decon_dsu_buffer_info_cnt -1; i >= 0; i-- ) {
+		if(decon_dsu_buffer_info[i].rgb_buffer != NULL )
+			kfree( decon_dsu_buffer_info[i].rgb_buffer );
+	}
+	decon_dsu_buffer_info_cnt = 0;
+}
+
+int decon_bmpbuffer_store_window(struct decon_device *decon, struct decon_reg_data *regs, int *old_plane_cnt)
+{
+	int i, j;
+
+	int x, y;
+	int width, height;
+	const int skip_x = DECON_DSU_BUFFER_ZOOM_OUT_X;
+	const int skip_y = DECON_DSU_BUFFER_ZOOM_OUT_Y;
+
+	void *g_vaddr;
+	u8* addr;
+	u8* src_pixel;
+	u8* ppixel;
+
+	//u8 r,g,b;
+	int bytes_per_pixel;
+
+	static decon_framebuffer *buffer_info;
+	int timestamp;
+	u8* dst_pixel;
+
+	timestamp = (int) ktime_to_ms(ktime_get());
+
+	for (i = 0; i < decon->pdata->max_win; i++) {
+		for (j = 0; j < old_plane_cnt[i]; ++j) {
+			if( regs->dma_buf_data[i][j].dma_addr) {
+
+				g_vaddr = ion_map_kernel( decon->ion_client, regs->dma_buf_data[i][j].ion_handle );
+
+				buffer_info = &(decon_dsu_buffer_info[decon_dsu_buffer_info_cnt]);
+				if( ++decon_dsu_buffer_info_cnt >= DECON_DSU_BUFFER_MAX ) return 1;
+				buffer_info->timestamp = timestamp;
+				memcpy( &(buffer_info->src), &(regs->vpp_config[i].src), sizeof(struct decon_frame) );
+				memcpy( &(buffer_info->dst), &(regs->vpp_config[i].dst), sizeof(struct decon_frame) );
+				buffer_info->width = buffer_info->src.w / skip_x;
+				buffer_info->height = buffer_info->src.h / skip_y;
+				buffer_info->plane_id = i;
+				buffer_info->rgb_buffer = (u8*) kmalloc( DECON_DSU_BUFFER_SIZE, GFP_KERNEL );
+
+				if( buffer_info->rgb_buffer == NULL ) {
+					buffer_info->buffer_size = 0;
+					pr_err( "%s %d : cannot malloc\n", __func__, i );
+					continue;
+				} else buffer_info->buffer_size = DECON_DSU_BUFFER_SIZE;
+
+				if( is_rgb32( regs->vpp_config[i].format ) ) bytes_per_pixel = 4;
+				else switch( regs->vpp_config[i].format ) {
+				case DECON_PIXEL_FORMAT_RGBA_5551:
+				case DECON_PIXEL_FORMAT_RGB_565:
+					bytes_per_pixel = 2;
+					break;
+				default:
+					bytes_per_pixel = 3;
+					break;
+				}
+
+				pr_info( "dsu_bitmap: %d dma_buf[%d][%d], src(x,y,w,h,f_w,f_h=%dx%d,%dx%d,%dx%d), dst(x,y,w,h,f_w,f_h=%dx%d,%dx%d,%dx%d), %d,%d\n",
+					timestamp, i, j,
+					regs->vpp_config[i].src.x, regs->vpp_config[i].src.y,
+					regs->vpp_config[i].src.w, regs->vpp_config[i].src.h,
+					regs->vpp_config[i].src.f_w, regs->vpp_config[i].src.f_h,
+					regs->vpp_config[i].dst.x, regs->vpp_config[i].dst.y,
+					regs->vpp_config[i].dst.w, regs->vpp_config[i].dst.h,
+					regs->vpp_config[i].dst.f_w, regs->vpp_config[i].dst.f_h,
+					regs->vpp_config[i].format, bytes_per_pixel );
+
+
+				width = regs->vpp_config[i].src.w;
+				height = regs->vpp_config[i].src.h;
+
+				dst_pixel = buffer_info->rgb_buffer;
+
+				// speed is important in this code.
+				switch( regs->vpp_config[i].format ) {
+				case DECON_PIXEL_FORMAT_XRGB_8888:
+				case DECON_PIXEL_FORMAT_ARGB_8888:
+					for( y = height -1; y >=0 ; y-=skip_y ) {
+						x = 0;
+						addr = g_vaddr +y*width*bytes_per_pixel + x*bytes_per_pixel;
+						src_pixel = addr;
+						for( ; x<width; x+=skip_x ) {
+							// r = src_pixel[1]; g = src_pixel[2]; b=src_pixel[3];
+							memcpy( dst_pixel, src_pixel +1, 3 );
+							dst_pixel+=3;
+							src_pixel += skip_x *bytes_per_pixel;
+						}
+						//	while( (dst_pixel -buffer_info->rgb_buffer) %4 > 0 ) dst_pixel++;
+					}
+					break;
+				case DECON_PIXEL_FORMAT_XBGR_8888:
+				case DECON_PIXEL_FORMAT_ABGR_8888:
+					for( y = height -1; y >=0 ; y-=skip_y ) {
+						x = 0;
+						addr = g_vaddr +y*width*bytes_per_pixel + x*bytes_per_pixel;
+						src_pixel = addr;
+						for( ; x<width; x+=skip_x ) {
+							//r = src_pixel[3]; g = src_pixel[2]; b=src_pixel[1];
+							ppixel = src_pixel +3;
+							*(dst_pixel++) = *(ppixel--);
+							*(dst_pixel++) = *(ppixel--);
+							*(dst_pixel++) = *(ppixel--);
+							src_pixel += skip_x *bytes_per_pixel;
+						}
+						//	while( (dst_pixel -buffer_info->rgb_buffer) %4 > 0 ) dst_pixel++;
+					}
+					break;
+				case DECON_PIXEL_FORMAT_RGBA_8888:
+				case DECON_PIXEL_FORMAT_RGBX_8888:
+					for( y = height -1; y >=0 ; y-=skip_y ) {
+						x = 0;
+						addr = g_vaddr +y*width*bytes_per_pixel + x*bytes_per_pixel;
+						src_pixel = addr;
+						for( ; x<width; x+=skip_x ) {
+							// r = src_pixel[0]; g = src_pixel[1]; b=src_pixel[2];
+							memcpy( dst_pixel, src_pixel, 3 );
+							dst_pixel+=3;
+							src_pixel += skip_x *bytes_per_pixel;
+						}
+						//	while( (dst_pixel -buffer_info->rgb_buffer) %4 > 0 ) dst_pixel++;
+					}
+					break;
+				case DECON_PIXEL_FORMAT_BGRX_8888:
+				case DECON_PIXEL_FORMAT_BGRA_8888:
+					for( y = height -1; y >=0 ; y-=skip_y ) {
+						x = 0;
+						addr = g_vaddr +y*width*bytes_per_pixel + x*bytes_per_pixel;
+						src_pixel = addr;
+						for( ; x<width; x+=skip_x ) {
+							// r = src_pixel[2]; g = src_pixel[1]; b=src_pixel[0];
+							ppixel = src_pixel +2;
+							*(dst_pixel++) = *(ppixel--);
+							*(dst_pixel++) = *(ppixel--);
+							*(dst_pixel++) = *(ppixel--);
+							src_pixel += skip_x *bytes_per_pixel;
+						}
+						//	while( (dst_pixel -buffer_info->rgb_buffer) %4 > 0 ) dst_pixel++;
+					}
+					break;
+					/* RGB 16 bit */
+				case DECON_PIXEL_FORMAT_RGBA_5551:
+					for( y = height -1; y >=0 ; y-=skip_y ) {
+						x = 0;
+						addr = g_vaddr +y*width*bytes_per_pixel + x*bytes_per_pixel;
+						src_pixel = addr;
+						for( ; x<width; x+=skip_x ) {
+							ppixel = src_pixel;
+							*(dst_pixel++) = (*ppixel)& 0xF8;
+							*(dst_pixel) = ((*ppixel++)&0x07)<<5;
+							*(dst_pixel++) |= ((*ppixel)&0xC0)>>3;;
+							*(dst_pixel++) = (*ppixel&0x3E)<<2;
+							src_pixel += skip_x *bytes_per_pixel;
+						}
+						//	while( (dst_pixel -buffer_info->rgb_buffer) %4 > 0 ) dst_pixel++;
+					}
+					break;
+				case DECON_PIXEL_FORMAT_RGB_565:
+					for( y = height -1; y >=0 ; y-=skip_y ) {
+						x = 0;
+						addr = g_vaddr +y*width*bytes_per_pixel + x*bytes_per_pixel;
+						src_pixel = addr;
+						for( ; x<width; x+=skip_x ) {
+							ppixel = src_pixel;
+							*(dst_pixel++) = (*ppixel)& 0xF8;
+							*(dst_pixel) = ((*ppixel++)&0x07)<<5;
+							*(dst_pixel++) |= ((*ppixel)&0xE0)>>3;;
+							*(dst_pixel++) = (*ppixel&0x1F)<<3;
+							src_pixel += skip_x *bytes_per_pixel;
+						}
+						//	while( (dst_pixel -buffer_info->rgb_buffer) %4 > 0 ) dst_pixel++;
+					}
+					break;
+					/* YUV422 2P */
+				case DECON_PIXEL_FORMAT_NV16:
+				case DECON_PIXEL_FORMAT_NV61:
+					/* YUV420 2P */
+				case DECON_PIXEL_FORMAT_NV12:
+				case DECON_PIXEL_FORMAT_NV21:
+				case DECON_PIXEL_FORMAT_NV12M:
+				case DECON_PIXEL_FORMAT_NV21M:
+					for( y = height -1; y >=0 ; y-=skip_y ) {
+						x = 0;
+						addr = g_vaddr +y*width*bytes_per_pixel + x*bytes_per_pixel;
+						src_pixel = addr;
+						for( ; x<width; x+=skip_x ) {
+							// r = src_pixel[0]; g = src_pixel[0]; b = src_pixel[0];
+							memset( dst_pixel, 3, src_pixel[0] );
+							dst_pixel += 3;
+							src_pixel += skip_x *bytes_per_pixel;
+						}
+						//	while( (dst_pixel -buffer_info->rgb_buffer) %4 > 0 ) dst_pixel++;
+					}
+					break;
+					/* YUV422 3P */
+				case DECON_PIXEL_FORMAT_YVU422_3P:
+					/* YUV420 3P */
+				case DECON_PIXEL_FORMAT_YUV420:
+				case DECON_PIXEL_FORMAT_YVU420:
+				case DECON_PIXEL_FORMAT_YUV420M:
+				case DECON_PIXEL_FORMAT_YVU420M:
+					for( y = height -1; y >=0 ; y-=skip_y ) {
+						x = 0;
+						addr = g_vaddr +y*width*bytes_per_pixel + x*bytes_per_pixel;
+						src_pixel = addr;
+						for( ; x<width; x+=skip_x ) {
+							// r = src_pixel[0]; g = src_pixel[0]; b = src_pixel[0];
+							memset( dst_pixel, 3, src_pixel[0] );
+							dst_pixel += 3;
+							src_pixel += skip_x *bytes_per_pixel;
+						}
+						//	while( (dst_pixel -buffer_info->rgb_buffer) %4 > 0 ) dst_pixel++;
+					}
+					break;
+					/* YUV - support for single plane */
+				case DECON_PIXEL_FORMAT_NV12N:
+				case DECON_PIXEL_FORMAT_NV12N_10B:
+				default:
+					for( y = height -1; y >=0 ; y-=skip_y ) {
+						x = 0;
+						addr = g_vaddr +y*width*bytes_per_pixel + x*bytes_per_pixel;
+						src_pixel = addr;
+						for( ; x<width; x+=skip_x ) {
+							// r = src_pixel[0]; g = src_pixel[0]; b = src_pixel[0];
+							memset( dst_pixel, 3, src_pixel[0] );
+							dst_pixel += 3;
+							src_pixel += skip_x *bytes_per_pixel;
+						}
+						//	while( (dst_pixel -buffer_info->rgb_buffer) %4 > 0 ) dst_pixel++;
+					}
+					break;
+				}
+			}
+		}
+	}
+
+	pr_info( "%s -- (%dms)\n", __func__, (int) ktime_to_ms(ktime_get()) -timestamp );
+	decon_bmpbuffer_store_timer--;
+	return 0;
+}
+
+
+#pragma pack(1)
+typedef struct tagBITMAPFILEHEADER {
+	u16 bfType;            //BM 이라고 써있으면 bmp
+	u32 bfSize;           //이미지 크기
+	u16 bfReserved1;
+	u16 bfReserved2;
+	u32 bfOffBits;      //이미지 데이터가 있는 곳의 포인터
+	u32 biSize;          //현 구조체의 크기
+	s32 biWidth;          //이미지의 가로 크기
+	s32 biHeight;         //이미지의 세로 크기
+	u16 biPlanes;        //플레인수
+	u16 biBitCount;     //비트 수
+	u32 biCompression;  //압축 유무
+	u32 biSizeImage;       //이미지 크기
+	s32 biXPelsPerMeter;  //미터당 가로 픽셀
+	s32 biYPelsPerMeter;  //미터당 세로 픽셀
+	u32 biClrUsed;         //컬러 사용 유무
+	u32 biClrImportant;  //중요하게 사용하는 색
+} BITMAPFILEHEADER;
+BITMAPFILEHEADER bitmapfileheader;
+#pragma pack()
+
+
+int decon_bmpbuffer_write_file( void )
+{
+	int ret = 0;
+	int i;
+
+	char filename[128];
+	struct file* filp = NULL;
+	mm_segment_t oldfs;
+
+	static decon_framebuffer *b_info;
+
+	for( i = 0; i < decon_dsu_buffer_info_cnt; i ++ )
+	{
+		b_info = &(decon_dsu_buffer_info[i]);
+		sprintf( filename, "/sdcard/Download/%06d_%d_%d_src%04dx%04d_dst%04dx%04d.bmp",
+			b_info->timestamp, i, b_info->plane_id, b_info->src.w, b_info->src.h, b_info->dst.w, b_info->dst.h );
+
+		bitmapfileheader.bfType = 0x4D42;
+		bitmapfileheader.bfSize = sizeof(bitmapfileheader) +b_info->buffer_size;
+		bitmapfileheader.bfReserved1 = 0;
+		bitmapfileheader.bfReserved2 = 0;
+		bitmapfileheader.bfOffBits = sizeof(bitmapfileheader);
+		bitmapfileheader.biSize = 0x40;		// size of info header = 40
+		bitmapfileheader.biWidth = b_info->width;
+		bitmapfileheader.biHeight = b_info->height;
+		bitmapfileheader.biPlanes = 1;
+		bitmapfileheader.biBitCount = 24; // 24bit BGR
+		bitmapfileheader.biCompression = 0;
+		bitmapfileheader.biSizeImage = b_info->buffer_size;
+		bitmapfileheader.biXPelsPerMeter = 2834; // 2834 = has no mean
+		bitmapfileheader.biYPelsPerMeter = 2834;
+		bitmapfileheader.biClrUsed = 0;
+		bitmapfileheader.biClrImportant = 0;
+
+		oldfs = get_fs();
+		set_fs(get_ds());
+		filp = filp_open(filename, O_WRONLY | O_CREAT | O_TRUNC, 0644 );
+		if (IS_ERR(filp)) {
+			dsim_info("%s (dsu_bitmap): failed to file open %s(%d)\n", __func__, filename, (int) (long)filp);
+			ret = -1;
+			continue;
+		} else dsim_info("flip open success\n");
+
+		filp->f_op->write( filp, (const char*) &bitmapfileheader, sizeof(bitmapfileheader), &filp->f_pos );
+		filp->f_op->write( filp, b_info->rgb_buffer, b_info->buffer_size, &filp->f_pos );
+
+		filp_close(filp, NULL);
+		set_fs(oldfs);
+
+		dsim_info("%s (dsu_bitmap): file '%s' saved.\n", __func__, filename);
+	}
+
+	return ret;
+}
+
+
+#endif
+

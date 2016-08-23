@@ -27,7 +27,7 @@
  * other than the GPL, without Broadcom's express prior written consent.
  * <<Broadcom-WL-IPTag/Open:>>
  *
- * $Id: wlioctl.h 609280 2016-01-01 06:31:38Z $
+ * $Id: wlioctl.h 633955 2016-04-26 08:17:00Z $
  */
 
 #ifndef _wlioctl_h_
@@ -8114,5 +8114,13 @@ typedef struct wl_temp_control {
 	bool enable;
 	uint16 control_bit;
 } wl_temp_control_t;
+
+/* SensorHub Iovar */
+typedef struct {
+	bool	enable;
+	uint16	cmd;
+	uint16	op_mode;
+	uint16	interval;
+} shub_control_t;
 
 #endif /* _wlioctl_h_ */

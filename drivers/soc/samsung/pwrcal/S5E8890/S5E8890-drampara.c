@@ -1008,6 +1008,10 @@ void smc_mode_register_write_per_ch(int ch, int mr, int rank, int op)
 	case 3:
 		base = SMC3_BASE;
 		break;
+	default:
+		pr_err("%s:[%d] is invalid ch number!!", __func__, ch);
+		BUG();
+		return;
 	}
 	modereg = base;
 	moderegwrdata = (base + 0x8);

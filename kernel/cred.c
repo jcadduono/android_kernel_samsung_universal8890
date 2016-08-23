@@ -33,6 +33,8 @@
 static struct kmem_cache *cred_jar;
 
 #ifdef CONFIG_RKP_KDP
+RKP_RO_AREA int rkp_cred_enable = 0;
+
 static struct kmem_cache *cred_jar_ro;
 struct kmem_cache *tsec_jar;
 atomic_t init_cred_use_cnt = ATOMIC_INIT(4);

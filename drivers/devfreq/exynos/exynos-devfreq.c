@@ -1341,7 +1341,7 @@ static int exynos_devfreq_target(struct device *dev,
 
 	if (data->use_cl_dvfs && !data->volt_offset) {
 		if (data->ops.cl_dvfs_start) {
-			data->ops.cl_dvfs_start(data);
+			ret = data->ops.cl_dvfs_start(data);
 			if (ret) {
 				dev_err(dev, "cl_dvfs does not start\n");
 				goto out;

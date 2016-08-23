@@ -143,7 +143,7 @@ int decon_set_par(struct fb_info *info)
 	struct decon_window_regs win_regs;
 	int win_no = win->index;
 
-	dev_info(decon->dev, "%s: state %d\n", __func__, decon->state);
+	dev_dbg(decon->dev, "%s: state %d\n", __func__, decon->state);
 
 	if ((decon->pdata->out_type == DECON_OUT_DSI &&
 			decon->state == DECON_STATE_INIT) ||
@@ -588,11 +588,22 @@ static DEVICE_ATTR(vsync, S_IRUGO, decon_vsync_show, NULL);
 static ssize_t decon_psr_info(struct device *dev,
 		struct device_attribute *attr, char *buf)
 {
-	struct decon_device *decon = dev_get_drvdata(dev);
-	struct decon_lcd *lcd_info = decon->lcd_info;
-	int dsc_offset = (lcd_info->dsc_enabled)? 4: 0;
+ 	struct decon_device *decon = dev_get_drvdata(dev);
+ 	struct decon_lcd *lcd_info = decon->lcd_info;
+	int dsc_y_slice_size = 0;
+	int psr_info = 0;
+ 
+	if (lcd_info->dsc_enabled) {
+		if (lcd_info->dsc_slice_num == 2)
+			dsc_y_slice_size = 64; /* in multi-resolution HD case, it is bigger than 32 */
+		else if (lcd_info->dsc_slice_num == 4)
+			dsc_y_slice_size = 64;
+	}
 
-	return scnprintf(buf, PAGE_SIZE, "%d\n", decon->pdata->psr_mode + dsc_offset);
+	psr_info = decon->pdata->psr_mode | (lcd_info->dsc_enabled << 2);
+
+	return scnprintf(buf, PAGE_SIZE, "%d\n%d\n%d\n", psr_info,
+			lcd_info->dsc_slice_num, dsc_y_slice_size);
 }
 
 static DEVICE_ATTR(psr_info, S_IRUGO, decon_psr_info, NULL);

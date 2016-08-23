@@ -457,10 +457,11 @@ out:
 
 static int s2m_set_ldo_dvs_control(struct regulator_dev *rdev)
 {
-	int ret;
+	int ret = -1;
 	struct s2mps16_info *s2mps16 = rdev_get_drvdata(rdev);
 	int reg_id = rdev_get_id(rdev);
-	unsigned int sram_vthr, sram_delta, asv_info;
+	unsigned int sram_vthr, sram_delta;
+	int asv_info;
 	int vthr_mask, delta_mask;
 	int vthr_val, delta_val = 0;
 	int dvs_reg;

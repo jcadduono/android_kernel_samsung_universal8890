@@ -48,7 +48,7 @@
 /* Watchdog interval */
 #define MFC_WATCHDOG_INTERVAL   1000
 /* After how many executions watchdog should assume lock up */
-#define MFC_WATCHDOG_CNT        5
+#define MFC_WATCHDOG_CNT        15
 
 #define MFC_NO_INSTANCE_SET	-1
 
@@ -169,9 +169,13 @@
 #define FW_HAS_INT_TIMEOUT(dev)		(IS_MFCv9X(dev) || IS_MFCv10X(dev))
 #define FW_HAS_CONCEAL_CONTROL(dev)	IS_MFCv10X(dev)
 
-#define FW_SUPPORT_SKYPE(dev)		IS_MFCv10X(dev) &&		\
-					(dev->fw.date >= 0x150901)
+#define FW_SUPPORT_SKYPE(dev)		(IS_MFCv10X(dev) &&		\
+					(dev->fw.date >= 0x150901))
 #define FW_HAS_ROI_CONTROL(dev)		IS_MFCv10X(dev)
+#define FW_HAS_MATRIX_COEFFICIENTS(dev)	(IS_MFCv10X(dev) &&		\
+					(dev->fw.date >= 0x151223))
+#define FW_HAS_SEI_INFO_FOR_HDR(dev)	(IS_MFCv10X(dev) &&		\
+					(dev->fw.date >= 0x160415))
 
 #define HW_LOCK_CLEAR_MASK		(0xFFFFFFFF)
 

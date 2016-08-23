@@ -95,7 +95,7 @@ static int gpu_tmu_notifier(struct notifier_block *notifier,
 	if (!platform->tmu_status)
 		return NOTIFY_OK;
 
-	platform->voltage_margin = 0;
+	platform->voltage_margin = platform->gpu_default_vol_margin;
 	index = *(unsigned long*)v;
 
 	if (event == GPU_COLD) {

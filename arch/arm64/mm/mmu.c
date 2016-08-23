@@ -43,11 +43,6 @@
 #include <linux/sentinel.h>
 #endif
 
-#ifdef CONFIG_RKP_KDP
-__attribute__((section (".tima.rkp.ro"))) int rkp_cred_enable = 0;
-EXPORT_SYMBOL(rkp_cred_enable);
-#endif /*CONFIG_RKP_KDP*/
-
 
 #if defined(CONFIG_ECT)
 #include <soc/samsung/ect_parser.h>

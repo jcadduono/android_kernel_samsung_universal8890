@@ -412,7 +412,7 @@ static int s2mpb02_pmic_probe(struct platform_device *pdev)
 		if (s2mpb02->rdev[i])
 			regulator_unregister(s2mpb02->rdev[i]);
 
-	kfree(s2mpb02);
+	devm_kfree(&pdev->dev, (void*)s2mpb02);
 
 	return ret;
 }

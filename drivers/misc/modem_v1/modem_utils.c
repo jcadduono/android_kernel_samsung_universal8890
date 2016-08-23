@@ -453,14 +453,14 @@ void netif_tx_flowctl(struct modem_shared *msd, bool tx_stop)
 
 	list_for_each_entry(iod, &msd->activated_ndev_list, node_ndev) {
 		if (tx_stop) {
-			netif_stop_queue(iod->ndev);
+			netif_stop_subqueue(iod->ndev, 0);
 #ifdef DEBUG_MODEM_IF_FLOW_CTRL
 			mif_err("tx_stop:%s, iod->ndev->name:%s\n",
 				tx_stop ? "suspend" : "resume",
 				iod->ndev->name);
 #endif
 		} else {
-			netif_wake_queue(iod->ndev);
+			netif_wake_subqueue(iod->ndev, 0);
 #ifdef DEBUG_MODEM_IF_FLOW_CTRL
 			mif_err("tx_stop:%s, iod->ndev->name:%s\n",
 				tx_stop ? "suspend" : "resume",

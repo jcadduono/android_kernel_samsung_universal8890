@@ -966,8 +966,8 @@ defrag_update_fat_prev(
 			}
 
 			/* Update FID info */
-			ino_info->fid.hint_last_off = -1;
-			ino_info->fid.hint_last_clu = 0;
+			ino_info->fid.hint_bmap.off = -1;
+			ino_info->fid.hint_bmap.clu = 0;
 
 			/* Clear old FAT-chain */
 			for (j = 0; j < chunk->nr_clus; j++)

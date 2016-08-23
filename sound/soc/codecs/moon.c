@@ -35,8 +35,10 @@
 
 #define MOON_NUM_ADSP 7
 
-#define MOON_DEFAULT_FRAGMENTS       1
-#define MOON_DEFAULT_FRAGMENT_SIZE   4096
+/* Number of compressed DAI hookups, each pair of DSP and dummy CPU
+ * are counted as one DAI
+ */
+#define MOON_NUM_COMPR_DAI 2
 
 #define MOON_FRF_COEFFICIENT_LEN 4
 
@@ -181,23 +183,36 @@ static int moon_rate_put(struct snd_kcontrol *kcontrol,
 	.get = snd_soc_get_enum_double, .put = moon_rate_put, \
 	.private_value = (unsigned long)&xenum }
 
+struct moon_priv;
+
 struct moon_compr {
-	struct mutex lock;
-
-	struct snd_compr_stream *stream;
-	struct wm_adsp *adsp;
-
-	size_t total_copied;
-	bool allocated;
+	struct wm_adsp_compr adsp_compr;
+	const char *dai_name;
 	bool trig;
+	struct mutex trig_lock;
+	struct moon_priv *priv;
 };
 
 struct moon_priv {
 	struct arizona_priv core;
 	struct arizona_fll fll[3];
-	struct moon_compr compr_info;
+	struct moon_compr compr_info[MOON_NUM_COMPR_DAI];
 
 	struct mutex fw_lock;
+};
+
+static const struct {
+	const char *dai_name;
+	int adsp_num;
+} compr_dai_mapping[MOON_NUM_COMPR_DAI] = {
+	{
+		.dai_name = "moon-dsp6-voicectrl",
+		.adsp_num = 5,
+	},
+	{
+		.dai_name = "moon-dsp-trace",
+		.adsp_num = 0,
+	},
 };
 
 static const struct wm_adsp_region moon_dsp1_regions[] = {
@@ -498,12 +513,10 @@ static int moon_rate_put(struct snd_kcontrol *kcontrol,
 
 	/* Apply the rate through the original callback */
 	clearwater_spin_sysclk(arizona);
-	udelay(300);
 	mutex_lock(&codec->mutex);
 	ret = snd_soc_update_bits(codec, e->reg, mask, val);
 	mutex_unlock(&codec->mutex);
 	clearwater_spin_sysclk(arizona);
-	udelay(300);
 
 out:
 	err = arizona_restore_sources(arizona, cur_sources,
@@ -562,11 +575,9 @@ static int moon_adsp_rate_put_cb(struct wm_adsp *adsp,
 	}
 
 	clearwater_spin_sysclk(arizona);
-	udelay(300);
 	/* Apply the rate */
 	ret = regmap_update_bits(adsp->regmap, adsp->base, mask, val);
 	clearwater_spin_sysclk(arizona);
-	udelay(300);
 
 out:
 	err = arizona_restore_sources(arizona, cur_sources,
@@ -592,7 +603,6 @@ static int moon_sysclk_ev(struct snd_soc_dapm_widget *w,
 	struct arizona *arizona = priv->arizona;
 
 	clearwater_spin_sysclk(arizona);
-	udelay(300);
 
 	return 0;
 }
@@ -606,7 +616,7 @@ static int moon_adsp_power_ev(struct snd_soc_dapm_widget *w,
 	struct arizona_priv *priv = &moon->core;
 	struct arizona *arizona = priv->arizona;
 	unsigned int freq;
-	int ret;
+	int i, ret;
 
 	ret = regmap_read(arizona->regmap, CLEARWATER_DSP_CLOCK_2, &freq);
 	if (ret != 0) {
@@ -617,10 +627,14 @@ static int moon_adsp_power_ev(struct snd_soc_dapm_widget *w,
 
 	switch (event) {
 	case SND_SOC_DAPM_PRE_PMU:
-		if (w->shift == 5) {
-			mutex_lock(&moon->compr_info.lock);
-			moon->compr_info.trig = false;
-			mutex_unlock(&moon->compr_info.lock);
+		for (i = 0; i < ARRAY_SIZE(moon->compr_info); ++i) {
+			if (moon->compr_info[i].adsp_compr.dsp->num !=
+			    w->shift + 1)
+				continue;
+
+			mutex_lock(&moon->compr_info[i].trig_lock);
+			moon->compr_info[i].trig = false;
+			mutex_unlock(&moon->compr_info[i].trig_lock);
 		}
 		break;
 	default:
@@ -1497,27 +1511,27 @@ SND_SOC_DAPM_AIF_OUT("AIF4TX2", NULL, 0,
 		     ARIZONA_AIF4_TX_ENABLES, ARIZONA_AIF4TX2_ENA_SHIFT, 0),
 
 SND_SOC_DAPM_PGA_E("OUT1L", SND_SOC_NOPM,
-		   ARIZONA_OUT1L_ENA_SHIFT, 0, NULL, 0, moon_hp_ev,
+		   ARIZONA_OUT1L_ENA_SHIFT, 0, NULL, 0, arizona_hp_ev,
 		   SND_SOC_DAPM_PRE_PMD | SND_SOC_DAPM_POST_PMD |
 		   SND_SOC_DAPM_PRE_PMU | SND_SOC_DAPM_POST_PMU),
 SND_SOC_DAPM_PGA_E("OUT1R", SND_SOC_NOPM,
-		   ARIZONA_OUT1R_ENA_SHIFT, 0, NULL, 0, moon_hp_ev,
+		   ARIZONA_OUT1R_ENA_SHIFT, 0, NULL, 0, arizona_hp_ev,
 		   SND_SOC_DAPM_PRE_PMD | SND_SOC_DAPM_POST_PMD |
 		   SND_SOC_DAPM_PRE_PMU | SND_SOC_DAPM_POST_PMU),
 SND_SOC_DAPM_PGA_E("OUT2L", ARIZONA_OUTPUT_ENABLES_1,
-		   ARIZONA_OUT2L_ENA_SHIFT, 0, NULL, 0, moon_analog_ev,
+		   ARIZONA_OUT2L_ENA_SHIFT, 0, NULL, 0, arizona_out_ev,
 		   SND_SOC_DAPM_PRE_PMD | SND_SOC_DAPM_POST_PMD |
 		   SND_SOC_DAPM_PRE_PMU | SND_SOC_DAPM_POST_PMU),
 SND_SOC_DAPM_PGA_E("OUT2R", ARIZONA_OUTPUT_ENABLES_1,
-		   ARIZONA_OUT2R_ENA_SHIFT, 0, NULL, 0, moon_analog_ev,
+		   ARIZONA_OUT2R_ENA_SHIFT, 0, NULL, 0, arizona_out_ev,
 		   SND_SOC_DAPM_PRE_PMD | SND_SOC_DAPM_POST_PMD |
 		   SND_SOC_DAPM_PRE_PMU | SND_SOC_DAPM_POST_PMU),
 SND_SOC_DAPM_PGA_E("OUT3L", ARIZONA_OUTPUT_ENABLES_1,
-		   ARIZONA_OUT3L_ENA_SHIFT, 0, NULL, 0, moon_analog_ev,
+		   ARIZONA_OUT3L_ENA_SHIFT, 0, NULL, 0, arizona_out_ev,
 		   SND_SOC_DAPM_PRE_PMD | SND_SOC_DAPM_POST_PMD |
 		   SND_SOC_DAPM_PRE_PMU | SND_SOC_DAPM_POST_PMU),
 SND_SOC_DAPM_PGA_E("OUT3R", ARIZONA_OUTPUT_ENABLES_1,
-		   ARIZONA_OUT3R_ENA_SHIFT, 0, NULL, 0, moon_analog_ev,
+		   ARIZONA_OUT3R_ENA_SHIFT, 0, NULL, 0, arizona_out_ev,
 		   SND_SOC_DAPM_PRE_PMD | SND_SOC_DAPM_POST_PMD |
 		   SND_SOC_DAPM_PRE_PMU | SND_SOC_DAPM_POST_PMU),
 SND_SOC_DAPM_PGA_E("OUT5L", ARIZONA_OUTPUT_ENABLES_1,
@@ -2087,6 +2101,7 @@ static const struct snd_soc_dapm_route moon_dapm_routes[] = {
 	{ "OUT2L", NULL, "SYSCLK" },
 	{ "OUT2R", NULL, "SYSCLK" },
 	{ "OUT3L", NULL, "SYSCLK" },
+	{ "OUT3R", NULL, "SYSCLK" },
 	{ "OUT5L", NULL, "SYSCLK" },
 	{ "OUT5R", NULL, "SYSCLK" },
 
@@ -2459,7 +2474,7 @@ static int moon_set_fll(struct snd_soc_codec *codec, int fll_id, int source,
 	}
 }
 
-#define MOON_RATES SNDRV_PCM_RATE_8000_192000
+#define MOON_RATES SNDRV_PCM_RATE_KNOT
 
 #define MOON_FORMATS (SNDRV_PCM_FMTBIT_S16_LE | SNDRV_PCM_FMTBIT_S20_3LE |\
 			SNDRV_PCM_FMTBIT_S24_LE | SNDRV_PCM_FMTBIT_S32_LE)
@@ -2650,48 +2665,61 @@ static struct snd_soc_dai_driver moon_dai[] = {
 	},
 };
 
-static irqreturn_t adsp2_irq(int irq, void *data)
-{
-	struct moon_priv *moon = data;
-	int ret, avail;
-
-	mutex_lock(&moon->compr_info.lock);
-
-	if (!moon->compr_info.trig &&
-	    moon->core.adsp[5].fw_features.ez2control_trigger &&
-	    moon->core.adsp[5].running) {
-		if (moon->core.arizona->pdata.ez2ctrl_trigger)
-			moon->core.arizona->pdata.ez2ctrl_trigger();
-		moon->compr_info.trig = true;
-	}
-
-	if (!moon->compr_info.allocated)
-		goto out;
-
-	ret = wm_adsp_stream_handle_irq(moon->compr_info.adsp);
-	if (ret < 0) {
-		dev_err(moon->core.arizona->dev,
-			"Failed to capture DSP data: %d\n",
-			ret);
-		goto out;
-	}
-
-	moon->compr_info.total_copied += ret;
-
-	avail = wm_adsp_stream_avail(moon->compr_info.adsp);
-	if (avail > MOON_DEFAULT_FRAGMENT_SIZE)
-		snd_compr_fragment_elapsed(moon->compr_info.stream);
-
-out:
-	mutex_unlock(&moon->compr_info.lock);
-
-	return IRQ_HANDLED;
-}
-
 static irqreturn_t moon_adsp_bus_error(int irq, void *data)
 {
 	struct wm_adsp *adsp = (struct wm_adsp *)data;
 	return wm_adsp2_bus_error(adsp);
+}
+
+static void moon_compr_irq(struct moon_priv *moon,
+			   struct moon_compr *compr)
+{
+	struct arizona *arizona = moon->core.arizona;
+	bool trigger = false;
+	int ret;
+
+	ret = wm_adsp_compr_irq(&compr->adsp_compr, &trigger);
+	if (ret < 0)
+		return;
+
+	if (trigger && arizona->pdata.ez2ctrl_trigger) {
+		mutex_lock(&compr->trig_lock);
+		if (!compr->trig) {
+			compr->trig = true;
+
+			if (wm_adsp_fw_has_voice_trig(compr->adsp_compr.dsp))
+				arizona->pdata.ez2ctrl_trigger();
+		}
+		mutex_unlock(&compr->trig_lock);
+	}
+}
+
+static irqreturn_t moon_adsp2_irq(int irq, void *data)
+{
+	struct moon_priv *moon = data;
+	int i;
+
+	for (i = 0; i < ARRAY_SIZE(moon->compr_info); ++i) {
+		if (!moon->compr_info[i].adsp_compr.dsp->running)
+			continue;
+
+		moon_compr_irq(moon, &moon->compr_info[i]);
+	}
+	return IRQ_HANDLED;
+}
+
+static struct moon_compr *moon_get_compr(struct snd_soc_pcm_runtime *rtd,
+					 struct moon_priv *moon)
+{
+	int i;
+
+	for (i = 0; i < ARRAY_SIZE(moon->compr_info); ++i) {
+		if (strcmp(rtd->codec_dai->name,
+			   moon->compr_info[i].dai_name) == 0)
+			return &moon->compr_info[i];
+	}
+
+	return NULL;
 }
 
 static irqreturn_t adsp2_spk_prot_irq(int irq, void *data)
@@ -2702,203 +2730,51 @@ static irqreturn_t adsp2_spk_prot_irq(int irq, void *data)
 	return IRQ_HANDLED;
 }
 
-static int moon_open(struct snd_compr_stream *stream)
+static int moon_compr_open(struct snd_compr_stream *stream)
 {
 	struct snd_soc_pcm_runtime *rtd = stream->private_data;
 	struct moon_priv *moon = snd_soc_codec_get_drvdata(rtd->codec);
-	struct arizona *arizona = moon->core.arizona;
-	int n_adsp, ret = 0;
+	struct moon_compr *compr;
 
-	mutex_lock(&moon->compr_info.lock);
-
-	if (moon->compr_info.stream) {
-		ret = -EBUSY;
-		goto out;
-	}
-
-	if (strcmp(rtd->codec_dai->name, "moon-dsp6-voicectrl") == 0) {
-		n_adsp = 5;
-	} else if (strcmp(rtd->codec_dai->name, "moon-dsp-trace") == 0) {
-		n_adsp = 0;
-	} else {
-		dev_err(arizona->dev,
-			"No suitable compressed stream for dai '%s'\n",
+	compr = moon_get_compr(rtd, moon);
+	if (!compr) {
+		dev_err(moon->core.arizona->dev,
+			"No compressed stream for dai '%s'\n",
 			rtd->codec_dai->name);
-		ret = -EINVAL;
-		goto out;
+		return -EINVAL;
 	}
 
-	if (!wm_adsp_compress_supported(&moon->core.adsp[n_adsp], stream)) {
-		dev_err(arizona->dev,
-			"No suitable firmware for compressed stream\n");
-		ret = -EINVAL;
-		goto out;
-	}
-
-	moon->compr_info.adsp = &moon->core.adsp[n_adsp];
-	moon->compr_info.stream = stream;
-out:
-	mutex_unlock(&moon->compr_info.lock);
-
-	return ret;
+	return wm_adsp_compr_open(&compr->adsp_compr, stream);
 }
 
-static int moon_free(struct snd_compr_stream *stream)
+static int moon_compr_trigger(struct snd_compr_stream *stream, int cmd)
 {
-	struct snd_soc_pcm_runtime *rtd = stream->private_data;
-	struct moon_priv *moon = snd_soc_codec_get_drvdata(rtd->codec);
+	struct wm_adsp_compr *adsp_compr =
+			(struct wm_adsp_compr *)stream->runtime->private_data;
+	struct moon_compr *compr = container_of(adsp_compr,
+						struct moon_compr,
+						adsp_compr);
+	struct arizona *arizona = compr->priv->core.arizona;
+	int ret;
 
-	mutex_lock(&moon->compr_info.lock);
-
-	moon->compr_info.allocated = false;
-	moon->compr_info.stream = NULL;
-	moon->compr_info.total_copied = 0;
-
-	wm_adsp_stream_free(moon->compr_info.adsp);
-
-	mutex_unlock(&moon->compr_info.lock);
-
-	return 0;
-}
-
-static int moon_set_params(struct snd_compr_stream *stream,
-			     struct snd_compr_params *params)
-{
-	struct snd_soc_pcm_runtime *rtd = stream->private_data;
-	struct moon_priv *moon = snd_soc_codec_get_drvdata(rtd->codec);
-	struct arizona *arizona = moon->core.arizona;
-	struct moon_compr *compr = &moon->compr_info;
-	int ret = 0;
-
-	mutex_lock(&compr->lock);
-
-	if (!wm_adsp_format_supported(compr->adsp, stream, params)) {
-		dev_err(arizona->dev,
-			"Invalid params: id:%u, chan:%u,%u, rate:%u format:%u\n",
-			params->codec.id, params->codec.ch_in,
-			params->codec.ch_out, params->codec.sample_rate,
-			params->codec.format);
-		ret = -EINVAL;
-		goto out;
-	}
-
-	ret = wm_adsp_stream_alloc(compr->adsp, params);
-	if (ret == 0)
-		compr->allocated = true;
-
-out:
-	mutex_unlock(&compr->lock);
-
-	return ret;
-}
-
-static int moon_get_params(struct snd_compr_stream *stream,
-			     struct snd_codec *params)
-{
-	return 0;
-}
-
-static int moon_trigger(struct snd_compr_stream *stream, int cmd)
-{
-	struct snd_soc_pcm_runtime *rtd = stream->private_data;
-	struct moon_priv *moon = snd_soc_codec_get_drvdata(rtd->codec);
-	struct arizona *arizona = moon->core.arizona;
-	int ret = 0;
-	bool pending = false;
-
-	mutex_lock(&moon->compr_info.lock);
+	ret = wm_adsp_compr_trigger(stream, cmd);
 
 	switch (cmd) {
 	case SNDRV_PCM_TRIGGER_START:
-		ret = wm_adsp_stream_start(moon->compr_info.adsp);
-
-		/**
-		 * If the stream has already triggered before the stream
-		 * opened better process any outstanding data
-		 */
-		if (moon->compr_info.trig)
-			pending = true;
-		break;
-	case SNDRV_PCM_TRIGGER_STOP:
+		if (compr->trig)
+			/*
+			 * If the firmware already triggered before the stream
+			 * was opened trigger another interrupt so irq handler
+			 * will run and process any outstanding data
+			 */
+			regmap_write(arizona->regmap,
+				     CLEARWATER_ADSP2_IRQ0, 0x01);
 		break;
 	default:
-		ret = -EINVAL;
 		break;
 	}
 
-	mutex_unlock(&moon->compr_info.lock);
-
-	/*
-	* Stream has already trigerred, force irq handler to run
-	* by generating interrupt.
-	*/
-	if (pending)
-		regmap_write(arizona->regmap, CLEARWATER_ADSP2_IRQ0, 0x01);
-
-
 	return ret;
-}
-
-static int moon_pointer(struct snd_compr_stream *stream,
-			  struct snd_compr_tstamp *tstamp)
-{
-	struct snd_soc_pcm_runtime *rtd = stream->private_data;
-	struct moon_priv *moon = snd_soc_codec_get_drvdata(rtd->codec);
-
-	mutex_lock(&moon->compr_info.lock);
-	tstamp->byte_offset = 0;
-	tstamp->copied_total = moon->compr_info.total_copied;
-	mutex_unlock(&moon->compr_info.lock);
-
-	return 0;
-}
-
-static int moon_copy(struct snd_compr_stream *stream, char __user *buf,
-		       size_t count)
-{
-	struct snd_soc_pcm_runtime *rtd = stream->private_data;
-	struct moon_priv *moon = snd_soc_codec_get_drvdata(rtd->codec);
-	int ret;
-
-	mutex_lock(&moon->compr_info.lock);
-
-	if (stream->direction == SND_COMPRESS_PLAYBACK)
-		ret = -EINVAL;
-	else
-		ret = wm_adsp_stream_read(moon->compr_info.adsp, buf, count);
-
-	mutex_unlock(&moon->compr_info.lock);
-
-	return ret;
-}
-
-static int moon_get_caps(struct snd_compr_stream *stream,
-			   struct snd_compr_caps *caps)
-{
-	struct snd_soc_pcm_runtime *rtd = stream->private_data;
-	struct moon_priv *moon = snd_soc_codec_get_drvdata(rtd->codec);
-
-	mutex_lock(&moon->compr_info.lock);
-
-	memset(caps, 0, sizeof(*caps));
-
-	caps->direction = stream->direction;
-	caps->min_fragment_size = MOON_DEFAULT_FRAGMENT_SIZE;
-	caps->max_fragment_size = MOON_DEFAULT_FRAGMENT_SIZE;
-	caps->min_fragments = MOON_DEFAULT_FRAGMENTS;
-	caps->max_fragments = MOON_DEFAULT_FRAGMENTS;
-
-	wm_adsp_get_caps(moon->compr_info.adsp, stream, caps);
-
-	mutex_unlock(&moon->compr_info.lock);
-
-	return 0;
-}
-
-static int moon_get_codec_caps(struct snd_compr_stream *stream,
-				 struct snd_compr_codec_caps *codec)
-{
-	return 0;
 }
 
 static int moon_codec_probe(struct snd_soc_codec *codec)
@@ -2923,8 +2799,10 @@ static int moon_codec_probe(struct snd_soc_codec *codec)
 			return ret;
 	}
 
-	ret = snd_soc_add_codec_controls(codec, wm_adsp2v2_fw_controls, 14);
-	if (ret != 0)
+	ret = snd_soc_add_codec_controls(codec,
+					 arizona_adsp2v2_rate_controls,
+					 MOON_NUM_ADSP);
+	if (ret)
 		return ret;
 
 	snd_soc_dapm_disable_pin(&codec->dapm, "HAPTICS");
@@ -2932,7 +2810,7 @@ static int moon_codec_probe(struct snd_soc_codec *codec)
 	priv->core.arizona->dapm = &codec->dapm;
 
 	ret = arizona_request_irq(arizona, ARIZONA_IRQ_DSP_IRQ1,
-				  "ADSP2 interrupt 1", adsp2_irq, priv);
+				  "ADSP2 interrupt 1", moon_adsp2_irq, priv);
 	if (ret != 0) {
 		dev_err(arizona->dev, "Failed to request DSP IRQ: %d\n", ret);
 		return ret;
@@ -3056,20 +2934,47 @@ static struct snd_soc_codec_driver soc_codec_dev_moon = {
 };
 
 static struct snd_compr_ops moon_compr_ops = {
-	.open = moon_open,
-	.free = moon_free,
-	.set_params = moon_set_params,
-	.get_params = moon_get_params,
-	.trigger = moon_trigger,
-	.pointer = moon_pointer,
-	.copy = moon_copy,
-	.get_caps = moon_get_caps,
-	.get_codec_caps = moon_get_codec_caps,
+	.open = moon_compr_open,
+	.free = wm_adsp_compr_free,
+	.set_params = wm_adsp_compr_set_params,
+	.trigger = moon_compr_trigger,
+	.pointer = wm_adsp_compr_pointer,
+	.copy = wm_adsp_compr_copy,
+	.get_caps = wm_adsp_compr_get_caps,
 };
 
 static struct snd_soc_platform_driver moon_compr_platform = {
 	.compr_ops = &moon_compr_ops,
 };
+
+static void moon_init_compr_info(struct moon_priv *moon)
+{
+	struct wm_adsp *dsp;
+	int i;
+
+	BUILD_BUG_ON(ARRAY_SIZE(moon->compr_info) !=
+		     ARRAY_SIZE(compr_dai_mapping));
+
+	for (i = 0; i < ARRAY_SIZE(moon->compr_info); ++i) {
+		moon->compr_info[i].priv = moon;
+
+		moon->compr_info[i].dai_name =
+			compr_dai_mapping[i].dai_name;
+
+		dsp = &moon->core.adsp[compr_dai_mapping[i].adsp_num],
+		wm_adsp_compr_init(dsp, &moon->compr_info[i].adsp_compr);
+
+		mutex_init(&moon->compr_info[i].trig_lock);
+	}
+}
+
+static void moon_destroy_compr_info(struct moon_priv *moon)
+{
+	int i;
+
+	for (i = 0; i < ARRAY_SIZE(moon->compr_info); ++i)
+		wm_adsp_compr_destroy(&moon->compr_info[i].adsp_compr);
+}
 
 static int moon_probe(struct platform_device *pdev)
 {
@@ -3089,7 +2994,6 @@ static int moon_probe(struct platform_device *pdev)
 	 * locate regulator supplies */
 	pdev->dev.of_node = arizona->dev->of_node;
 
-	mutex_init(&moon->compr_info.lock);
 	mutex_init(&moon->fw_lock);
 
 	moon->core.arizona = arizona;
@@ -3123,10 +3027,14 @@ static int moon_probe(struct platform_device *pdev)
 
 		moon->core.adsp[i].lock_regions = WM_ADSP2_REGION_1_9;
 
+		moon->core.adsp[i].hpimp_cb = arizona_hpimp_cb;
+
 		ret = wm_adsp2_init(&moon->core.adsp[i], &moon->fw_lock);
 		if (ret != 0)
 			return ret;
 	}
+
+	moon_init_compr_info(moon);
 
 	for (i = 0; i < ARRAY_SIZE(moon->fll); i++) {
 		moon->fll[i].vco_mult = 3;
@@ -3176,7 +3084,7 @@ static int moon_probe(struct platform_device *pdev)
 	return ret;
 
 error:
-	mutex_destroy(&moon->compr_info.lock);
+	moon_destroy_compr_info(moon);
 	mutex_destroy(&moon->fw_lock);
 
 	return ret;
@@ -3185,11 +3093,17 @@ error:
 static int moon_remove(struct platform_device *pdev)
 {
 	struct moon_priv *moon = platform_get_drvdata(pdev);
+	int i;
 
+	snd_soc_unregister_platform(&pdev->dev);
 	snd_soc_unregister_codec(&pdev->dev);
 	pm_runtime_disable(&pdev->dev);
 
-	mutex_destroy(&moon->compr_info.lock);
+	moon_destroy_compr_info(moon);
+
+	for (i = 0; i < MOON_NUM_ADSP; i++)
+		wm_adsp2_remove(&moon->core.adsp[i]);
+
 	mutex_destroy(&moon->fw_lock);
 
 	return 0;

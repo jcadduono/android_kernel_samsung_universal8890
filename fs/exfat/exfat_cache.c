@@ -738,3 +738,26 @@ static void move_to_lru(BUF_CACHE_T *bp, BUF_CACHE_T *list)
 	bp->next->prev = bp->prev;
 	push_to_lru(bp, list);
 }
+
+INT32 buf_cache_readahead(struct super_block * sb, UINT32 sec)
+{
+	FS_INFO_T *p_fs = &(EXFAT_SB(sb)->fs_info);
+	struct buffer_head *bh;
+
+	if (p_fs->sectors_per_clu == 1)
+		return 0;
+
+	if (sec < p_fs->root_start_sector)
+		return (FFS_MEDIAERR);
+
+	if ((sec - p_fs->root_start_sector) & (p_fs->sectors_per_clu - 1))
+		return (FFS_MEDIAERR);
+
+	bh = __find_get_block(sb->s_bdev, sec, sb->s_blocksize);
+	if (!bh || !buffer_uptodate(bh))
+		bdev_reada(sb, sec, p_fs->sectors_per_clu);
+
+	brelse(bh);
+
+	return 0;
+}

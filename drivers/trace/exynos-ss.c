@@ -40,6 +40,7 @@
 #include <linux/of_address.h>
 #include <linux/exynos-busmon.h>
 
+#include <asm/cputype.h>
 #include <asm/cacheflush.h>
 #include <asm/ptrace.h>
 #include <asm/memory.h>
@@ -117,7 +118,12 @@ struct exynos_ss_log {
 		unsigned long long time;
 		unsigned long sp;
 		struct task_struct *task;
+#if defined(CONFIG_SEC_DUMP_SUMMARY)	
+		unsigned long task_comm_addr;
+		int pid;
+#endif
 		char *task_comm;
+
 	} task[ESS_NR_CPUS][ESS_LOG_MAX_NUM];
 
 	struct work_log {
@@ -550,8 +556,11 @@ static struct exynos_ss_log_idx ess_idx;
 static struct exynos_ss_log *ess_log = NULL;
 static struct exynos_ss_desc ess_desc;
 
+#define RESET_DELAYED_TIME 2000
+
 /* Extern variable */
 unsigned int *exynos_ss_base_enabled = &ess_base.enabled;
+bool exynos_ss_hardkey_triger = false;
 
 DEFINE_PER_CPU(struct pt_regs *, ess_core_reg);
 DEFINE_PER_CPU(struct exynos_ss_mmu_reg *, ess_mmu_reg);
@@ -747,6 +756,14 @@ int exynos_ss_post_panic(void)
 		}
 #endif
 	}
+
+	// For debuging hardkeyReset case
+	if(exynos_ss_hardkey_triger) {		
+		printk("wait for RESET_DELAYED_TIME\n");
+		mdelay(RESET_DELAYED_TIME);
+		printk("end RESET_DELAYED_TIME\n");
+	}
+	
 #ifdef CONFIG_EXYNOS_SNAPSHOT_PANIC_REBOOT
 	arm_pm_restart(0, "panic");
 #endif
@@ -797,10 +814,34 @@ int exynos_ss_dump(void)
 	 */
 #ifdef CONFIG_ARM64
 	unsigned long reg1, reg2;
-	asm ("mrs %0, S3_1_c15_c2_2\n\t"
-		"mrs %1, S3_1_c15_c2_3\n"
-		: "=r" (reg1), "=r" (reg2));
-	pr_emerg("CPUMERRSR: %016lx, L2MERRSR: %016lx\n", reg1, reg2);
+
+	if ((read_cpuid_implementor() == ARM_CPU_IMP_SEC)
+			&& (read_cpuid_part_number() == ARM_CPU_PART_MONGOOSE)){
+		/* for mngs */
+		asm ("mrs %0, S3_1_c15_c2_0\n\t"
+			"mrs %1, S3_1_c15_c2_4\n"
+			: "=r" (reg1), "=r" (reg2));
+		pr_emerg("FEMERR0SR: %016lx, FEMERR1SR: %016lx\n", reg1, reg2);
+		asm ("mrs %0, S3_1_c15_c2_1\n\t"
+			"mrs %1, S3_1_c15_c2_5\n"
+			: "=r" (reg1), "=r" (reg2));
+		pr_emerg("LSMERR0SR: %016lx, LSMERR1SR: %016lx\n", reg1, reg2);
+		asm ("mrs %0, S3_1_c15_c2_2\n\t"
+			"mrs %1, S3_1_c15_c2_6\n"
+			: "=r" (reg1), "=r" (reg2));
+		pr_emerg("TBWMERR0SR: %016lx, TBWMERR1SR: %016lx\n", reg1, reg2);
+		asm ("mrs %0, S3_1_c15_c2_3\n\t"
+			"mrs %1, S3_1_c15_c2_7\n"
+			: "=r" (reg1), "=r" (reg2));
+		pr_emerg("L2MERR0SR: %016lx, L2MERR1SR: %016lx\n", reg1, reg2);
+
+	} else {
+		/* for apollo */
+		asm ("mrs %0, S3_1_c15_c2_2\n\t"
+			"mrs %1, S3_1_c15_c2_3\n"
+			: "=r" (reg1), "=r" (reg2));
+		pr_emerg("CPUMERRSR: %016lx, L2MERRSR: %016lx\n", reg1, reg2);
+	}
 #else
 	unsigned long reg0;
 	asm ("mrc p15, 0, %0, c0, c0, 0\n": "=r" (reg0));
@@ -1853,7 +1894,8 @@ static int __init exynos_ss_fixmap(void)
 
 #ifdef CONFIG_SEC_DEBUG
 	sec_debug_save_last_kmsg(ess_items[ess_desc.log_kernel_num].head_ptr,
-				 ess_items[ess_desc.log_kernel_num].curr_ptr);
+			ess_items[ess_desc.log_kernel_num].curr_ptr,
+			ess_items[ess_desc.log_kernel_num].entry.size);
 #endif
 
 	return 0;
@@ -1946,7 +1988,11 @@ void __exynos_ss_task(int cpu, void *v_task)
 		ess_log->task[cpu][i].time = cpu_clock(cpu);
 		ess_log->task[cpu][i].sp = (unsigned long) current_stack_pointer;
 		ess_log->task[cpu][i].task = (struct task_struct *)v_task;
-		ess_log->task[cpu][i].task_comm = ess_log->task[cpu][i].task->comm;
+#if defined(CONFIG_SEC_DUMP_SUMMARY)		
+		ess_log->task[cpu][i].pid = ((struct task_struct *)v_task)->pid;
+		ess_log->task[cpu][i].task_comm_addr = virt_to_phys(((struct task_struct *)v_task)->comm);
+#endif
+		ess_log->task[cpu][i].task_comm = ((struct task_struct *)v_task)->comm;
 	}
 }
 
@@ -2408,6 +2454,43 @@ void __exynos_ss_reg(unsigned int read, size_t val, size_t reg, int en)
 		ess_log->reg[cpu][i].caller[j] =
 			(void *)((size_t)return_address(j + 1));
 	}
+}
+#endif
+
+#if defined(CONFIG_SEC_DUMP_SUMMARY)
+void exynos_ss_summary_set_sched_log_buf(struct sec_debug_summary *summary_info)
+{
+		summary_info->kernel.sched_log.task_buf_paddr = 
+			virt_to_phys(ess_info.info_event) + offsetof(struct exynos_ss_log, task);
+		summary_info->kernel.sched_log.task_struct_sz = sizeof(struct task_log);
+		summary_info->kernel.sched_log.task_array_cnt = ESS_LOG_MAX_NUM;
+
+		pr_info("%s, task_buf_paddr:0x%lx size:0x%x\n", __func__, 
+			summary_info->kernel.sched_log.task_buf_paddr, summary_info->kernel.sched_log.task_struct_sz );
+		
+		summary_info->kernel.sched_log.irq_buf_paddr = 
+			virt_to_phys(ess_info.info_event) + offsetof(struct exynos_ss_log, irq);
+		summary_info->kernel.sched_log.irq_struct_sz = sizeof(struct irq_log);
+		summary_info->kernel.sched_log.irq_array_cnt = ESS_LOG_MAX_NUM*2;
+
+		pr_info("%s, irq_buf_paddr:0x%lx size:0x%x\n", __func__, 
+			summary_info->kernel.sched_log.irq_buf_paddr, summary_info->kernel.sched_log.irq_struct_sz );
+		
+		summary_info->kernel.sched_log.work_buf_paddr = 
+			virt_to_phys(ess_info.info_event) + offsetof(struct exynos_ss_log, work);
+		summary_info->kernel.sched_log.work_struct_sz = sizeof(struct work_log);
+		summary_info->kernel.sched_log.work_array_cnt = ESS_LOG_MAX_NUM;
+
+		summary_info->kernel.sched_log.cpuidle_buf_paddr = 
+			virt_to_phys(ess_info.info_event) + offsetof(struct exynos_ss_log, cpuidle);
+		summary_info->kernel.sched_log.cpuidle_struct_sz = sizeof(struct cpuidle_log);
+		summary_info->kernel.sched_log.cpuidle_array_cnt = ESS_LOG_MAX_NUM;		
+#ifdef CONFIG_EXYNOS_SNAPSHOT_HRTIMER
+		summary_info->kernel.sched_log.timer_buf_paddr = 
+			virt_to_phys(ess_info.info_event) + offsetof(struct exynos_ss_log, hrtimers);
+		summary_info->kernel.sched_log.timer_struct_sz = sizeof(struct hrtimer_log);
+		summary_info->kernel.sched_log.timer_array_cnt = ESS_LOG_MAX_NUM;
+#endif
 }
 #endif
 

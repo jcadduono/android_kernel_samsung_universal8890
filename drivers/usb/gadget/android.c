@@ -28,6 +28,7 @@
 #include <linux/usb/composite.h>
 #include <linux/usb/gadget.h>
 #include <linux/soc/samsung/exynos-soc.h>
+#include <linux/usb_notify.h>
 
 #include "gadget_chips.h"
 
@@ -69,7 +70,7 @@ static int composite_string_index;
 /* f_midi configuration */
 #define MIDI_INPUT_PORTS    1
 #define MIDI_OUTPUT_PORTS   1
-#define MIDI_BUFFER_SIZE    256
+#define MIDI_BUFFER_SIZE    512
 #define MIDI_QUEUE_LENGTH   32
 
 #ifdef CONFIG_USB_ANDROID_SAMSUNG_COMPOSITE
@@ -215,7 +216,10 @@ static void android_work(struct work_struct *data)
 
 	if (uevent_envp) {
 		kobject_uevent_env(&dev->dev->kobj, KOBJ_CHANGE, uevent_envp);
-			printk(KERN_DEBUG "usb: %s sent uevent %s\n",
+#ifdef CONFIG_USB_NOTIFY_PROC_LOG
+		store_usblog_notify(NOTIFY_USBSTATE, (void *)uevent_envp[0], NULL);
+#endif
+		printk(KERN_DEBUG "usb: %s sent uevent %s\n",
 			 __func__, uevent_envp[0]);
 	} else {
 		printk(KERN_DEBUG "usb: %s did not send uevent (%d %d %p)\n",
@@ -500,12 +504,34 @@ conn_gadget_function_bind_config(struct android_usb_function *f,
 	return conn_gadget_bind_config(c);
 }
 
+static DEVICE_ATTR(usb_buffer_size, S_IRUGO | S_IWUSR,
+	conn_gadget_usb_buffer_size_show,
+	conn_gadget_usb_buffer_size_store);
+
+static DEVICE_ATTR(out_max_packet_size, S_IRUGO | S_IWUSR,
+	conn_gadget_out_max_packet_size_show,
+	conn_gadget_out_max_packet_size_store);
+
+static DEVICE_ATTR(in_max_packet_size, S_IRUGO | S_IWUSR,
+	conn_gadget_in_max_packet_size_show,
+	conn_gadget_in_max_packet_size_store);
+
+static struct device_attribute *conn_gadget_function_attributes[] = {
+	&dev_attr_usb_buffer_size, 
+	&dev_attr_out_max_packet_size,
+	&dev_attr_in_max_packet_size,
+	NULL
+};
+
 static struct android_usb_function conn_gadget_function = {
 	.name = "conn_gadget",
 	.init = conn_gadget_function_init,
 	.cleanup = conn_gadget_function_cleanup,
 	.bind_config = conn_gadget_function_bind_config,
+	.attributes	= conn_gadget_function_attributes,
 };
+
+
 #endif /* CONFIG_USB_ANDROID_SAMSUNG_SIDESYNC */
 
 static void adb_ready_callback(void)
@@ -1453,6 +1479,10 @@ functions_store(struct device *pdev, struct device_attribute *attr,
 	strlcpy(buf, buff, sizeof(buf));
 	b = strim(buf);
 
+#ifdef CONFIG_USB_NOTIFY_PROC_LOG
+	store_usblog_notify(NOTIFY_USBMODE, (void *)b, NULL);
+#endif
+
 	while (b) {
 		name = strsep(&b, ",");
 		if (!name)
@@ -1866,6 +1896,12 @@ static int android_usb_unbind(struct usb_composite_dev *cdev)
 	android_cleanup_functions(dev->functions);
 	return 0;
 }
+static void android_gadget_complete(struct usb_ep *ep, struct usb_request *req)
+{
+	if(req->status || req->actual != req->length)
+			printk(KERN_DEBUG "usb: %s: %d, %d/%d\n", __func__,
+				req->status, req->actual, req->length);
+}
 
 /* HACK: android needs to override setup for accessory to work */
 static int (*composite_setup_func)(struct usb_gadget *gadget, const struct usb_ctrlrequest *c);
@@ -1883,6 +1919,8 @@ android_setup(struct usb_gadget *gadget, const struct usb_ctrlrequest *c)
 	req->zero = 0;
 	req->length = 0;
 	gadget->ep0->driver_data = cdev;
+
+	req->complete = android_gadget_complete;
 
 	list_for_each_entry(f, &dev->enabled_functions, enabled_list) {
 		if (f->ctrlrequest) {

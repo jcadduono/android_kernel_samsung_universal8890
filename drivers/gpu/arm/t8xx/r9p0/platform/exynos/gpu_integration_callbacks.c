@@ -181,7 +181,9 @@ int gpu_vendor_dispatch(struct kbase_context *kctx, void * const args, u32 args_
 #ifdef CONFIG_USE_VSYNC_SKIP
 			struct kbase_uk_tmu_skip *tskip = args;
 			int thermistor = sec_therm_get_ap_temperature();
-			u32 i, t_index = tskip->num_ratiometer;
+			u32 i, t_index;
+			tskip->num_ratiometer = MIN(tskip->num_ratiometer, TMU_INDEX_MAX);
+			t_index = tskip->num_ratiometer;
 
 			for (i = 0; i < tskip->num_ratiometer; i++)
 				if (thermistor >= tskip->temperature[i])
@@ -225,11 +227,11 @@ int gpu_vendor_dispatch(struct kbase_context *kctx, void * const args, u32 args_
 				set_hmp_aggressive_up_migration(true);
 				set_hmp_aggressive_yield(true);
 #endif
-		}
+			}
 #ifdef CONFIG_MALI_DVFS
-				platform = (struct exynos_context *) kbdev->platform_context;
-				gpu_pm_qos_command(platform, GPU_CONTROL_PM_QOS_EGL_SET);
-#endif /* CONFIG_MALI_DVFS */			
+			platform = (struct exynos_context *) kbdev->platform_context;
+			gpu_pm_qos_command(platform, GPU_CONTROL_PM_QOS_EGL_SET);
+#endif /* CONFIG_MALI_DVFS */
 			break;
 		}
 

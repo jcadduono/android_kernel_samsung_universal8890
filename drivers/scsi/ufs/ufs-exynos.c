@@ -114,6 +114,9 @@ static inline void exynos_ufs_ctrl_phy_pwr(struct exynos_ufs *ufs, bool en)
 
 static struct exynos_ufs *ufs_host_backup[1];
 static int ufs_host_index = 0;
+static int dump_once_again = 1;
+static int dump_sfr[292];
+static int dump_attr[188];
 
 static struct exynos_ufs_sfr_log ufs_cfg_log_sfr[] = {
 	{"STD HCI SFR"			,	LOG_STD_HCI_SFR,		0},
@@ -645,6 +648,7 @@ static void exynos_ufs_get_sfr(struct ufs_hba *hba)
 	struct exynos_ufs *ufs = to_exynos_ufs(hba);
 	struct exynos_ufs_sfr_log* cfg = ufs->debug.sfr;
 	int sel_api = 0;
+	int i = 0;
 
 	while(cfg) {
 		if (!cfg->name)
@@ -667,7 +671,11 @@ static void exynos_ufs_get_sfr(struct ufs_hba *hba)
 				cfg->val = phy_pma_readl(ufs, cfg->offset);
 			else
 				cfg->val = 0xFFFFFFFF;
+
 		}
+
+		if (dump_once_again)
+			dump_sfr[i++] = cfg->val;
 
 		/* Next SFR */
 		cfg++;
@@ -680,6 +688,7 @@ static void exynos_ufs_get_attr(struct ufs_hba *hba)
 	u32 intr_status;
 	u32 intr_enable;
 	struct exynos_ufs_attr_log* cfg = ufs_cfg_log_attr;
+	int j = 0;
 
 	/* Disable and backup interrupts */
 	intr_enable = ufshcd_readl(hba, REG_INTERRUPT_ENABLE);
@@ -712,6 +721,9 @@ static void exynos_ufs_get_attr(struct ufs_hba *hba)
 		cfg->res = ufshcd_readl(hba, REG_UIC_COMMAND_ARG_2 &
 				MASK_UIC_COMMAND_RESULT);
 		cfg->val = ufshcd_readl(hba, REG_UIC_COMMAND_ARG_3);
+
+		if (dump_once_again)
+			dump_attr[j++] = cfg->val;
 
 		/* Next attribute */
 		cfg++;
@@ -791,14 +803,24 @@ static void exynos_ufs_get_debug_info(struct ufs_hba *hba)
 {
 	struct exynos_ufs *ufs = to_exynos_ufs(hba);
 
+	if ((hba->debug.flag & UFSHCD_DEBUG_DUMP) && dump_once_again)
+		goto dump;
+
 	if (!(ufs->misc_flags & EXYNOS_UFS_MISC_TOGGLE_LOG))
 		return;
 
+dump:
 	exynos_ufs_get_sfr(hba);
 	exynos_ufs_get_attr(hba);
 	exynos_ufs_get_misc(hba);
+	printk("dump_once_again %d\n", dump_once_again);
+	WARN_ON(1);
 
-	ufs->misc_flags &= ~(EXYNOS_UFS_MISC_TOGGLE_LOG);
+	if (hba->debug.flag & UFSHCD_DEBUG_DUMP)
+		dump_once_again = 0;
+
+	if (!(hba->debug.flag & UFSHCD_DEBUG_DUMP))
+		ufs->misc_flags &= ~(EXYNOS_UFS_MISC_TOGGLE_LOG);
 }
 
 static inline

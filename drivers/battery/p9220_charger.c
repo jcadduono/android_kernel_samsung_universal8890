@@ -54,6 +54,7 @@ static enum power_supply_property sec_charger_props[] = {
 	POWER_SUPPLY_PROP_CHARGE_TYPE,
 	POWER_SUPPLY_PROP_HEALTH,
 	POWER_SUPPLY_PROP_ONLINE,
+	POWER_SUPPLY_PROP_VOLTAGE_MAX,
 	POWER_SUPPLY_PROP_CURRENT_NOW,
 	POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN,
 	POWER_SUPPLY_PROP_CHARGE_OTG_CONTROL,
@@ -377,7 +378,10 @@ void p9220_set_vout(struct p9220_charger_data *charger, int vout)
 				break;
 			}
 			/* We set VOUT to 10V actually for HERO for RE/CE standard authentication */
-			p9220_reg_write(charger->client, P9220_VOUT_SET_REG, P9220_VOUT_9V_VAL);
+			if (charger->pdata->hv_vout_wa)
+				p9220_reg_write(charger->client, P9220_VOUT_SET_REG, charger->pdata->hv_vout_wa);
+			else
+				p9220_reg_write(charger->client, P9220_VOUT_SET_REG, P9220_VOUT_9V_VAL);
 			msleep(100);
 			pr_info("%s vout read = %d mV \n", __func__,  p9220_get_adc(charger, P9220_ADC_VOUT));
 			break;
@@ -1363,6 +1367,13 @@ static int p9220_chg_get_property(struct power_supply *psy,
 		break;
 	case POWER_SUPPLY_PROP_CHARGE_TYPE:
 	case POWER_SUPPLY_PROP_HEALTH:
+		return -ENODATA;
+	case POWER_SUPPLY_PROP_VOLTAGE_MAX:
+		if(charger->pdata->ic_on_mode || charger->pdata->is_charging) {
+			val->intval = p9220_get_vout(charger);
+		} else
+			val->intval = 0;
+		break;
 	case POWER_SUPPLY_PROP_CURRENT_NOW:
 	case POWER_SUPPLY_PROP_CHARGE_OTG_CONTROL:
 	case POWER_SUPPLY_PROP_CHARGE_POWERED_OTG_CONTROL:
@@ -1373,7 +1384,7 @@ static int p9220_chg_get_property(struct power_supply *psy,
 		val->intval = charger->pdata->cable_type;
 		break;
 	case POWER_SUPPLY_PROP_INPUT_VOLTAGE_REGULATION:
-		val->intval = p9220_get_vout(charger);
+		val->intval = charger->pdata->vout_status;
 		break;
 	case POWER_SUPPLY_PROP_MANUFACTURER:
 		if (val->intval == SEC_WIRELESS_OTP_FIRM_RESULT) {
@@ -1995,12 +2006,12 @@ static int p9220_chg_parse_dt(struct device *dev,
 		ret = of_property_read_string(np,
 			"battery,wireless_charger_name", (char const **)&pdata->wireless_charger_name);
 		if (ret < 0)
-			pr_info("%s: Vendor is Empty\n", __func__);
+			pr_info("%s: Wireless Charger name is Empty\n", __func__);
 
 		ret = of_property_read_string(np,
 			"battery,charger_name", (char const **)&pdata->wired_charger_name);
 		if (ret < 0)
-			pr_info("%s: Vendor is Empty\n", __func__);
+			pr_info("%s: Charger name is Empty\n", __func__);
 
 		ret = of_property_read_u32(np, "battery,wpc_cc_cv_vout",
 						&pdata->wpc_cc_cv_vout);
@@ -2016,6 +2027,13 @@ static int p9220_chg_parse_dt(struct device *dev,
 						&pdata->wpc_cc_call_vout);
 		if (ret < 0)
 			pr_info("%s: wpc_cc_call_vout is Empty \n", __func__);
+
+		ret = of_property_read_u32(np, "battery,hv_vout_wa",
+						&pdata->hv_vout_wa);
+		if (ret < 0) {
+			pr_info("%s: no need hv_vout_wa. \n", __func__);
+			pdata->hv_vout_wa = 0;
+		}
 
 		/* wpc_det */
 		ret = pdata->wpc_det = of_get_named_gpio_flags(np, "battery,wpc_det",

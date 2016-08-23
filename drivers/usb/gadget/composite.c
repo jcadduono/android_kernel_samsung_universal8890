@@ -25,7 +25,7 @@
 #endif
 
 #include "u_os_desc.h"
-
+#include <linux/usb_notify.h>
 /**
  * struct usb_os_string - represents OS String to be reported by a gadget
  * @bLength: total length of the entire descritor, always 0x12
@@ -1521,12 +1521,18 @@ composite_setup(struct usb_gadget *gadget, const struct usb_ctrlrequest *ctrl)
 				cdev->gadget->ep0->maxpacket;
 			if (gadget_is_superspeed(gadget)) {
 				if (gadget->speed >= USB_SPEED_SUPER) {
-					cdev->desc.bcdUSB = cpu_to_le16(0x0300);
+					cdev->desc.bcdUSB = cpu_to_le16(0x0310);
 					cdev->desc.bMaxPacketSize0 = 9;
 				} else {
 					cdev->desc.bcdUSB = cpu_to_le16(0x0210);
 				}
 			}
+
+			if(cdev->desc.bcdUSB == cpu_to_le16(0x0310) ||
+				cdev->desc.bcdUSB == cpu_to_le16(0x0300))
+				store_usblog_notify(NOTIFY_USBSTATE, "SPEED=SPSS", NULL);	
+			else
+				store_usblog_notify(NOTIFY_USBSTATE, "SPEED=HIGH", NULL);			
 
 			value = min(w_length, (u16) sizeof cdev->desc);
 			memcpy(req->buf, &cdev->desc, value);

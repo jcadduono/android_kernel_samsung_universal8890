@@ -235,11 +235,7 @@ section_table:
 ENTRY(stext)
 #ifdef CONFIG_RKP_CFP_ROPP
 	/* Must intialize RRK to zero */
-	mov RRK, #0
-#endif
-#ifdef CONFIG_RKP_CFP_JOPP
-	/* We need RRS to be loaded before we take our first instrumented BLR branch.  */
-	load_function_entry_magic_number_before_reloc head_magic
+	mov	RRK, #0
 #endif
 #ifdef CONFIG_RELOCATABLE_KERNEL
 	mov	x22, x1				// x1=PHYS_OFFSET
@@ -281,10 +277,6 @@ ENTRY(stext)
 #endif
 	br	x12				// initialise processor
 ENDPROC(stext)
-
-#ifdef CONFIG_RKP_CFP_JOPP
-alloc_function_entry_magic_number head_magic
-#endif
 
 
 #ifdef CONFIG_RELOCATABLE_KERNEL
@@ -550,9 +542,6 @@ ENTRY(secondary_startup)
 	/*
 	 * Common entry point for secondary CPUs.
 	 */
-#ifdef CONFIG_RKP_CFP_JOPP
-	load_function_entry_magic_number_no_mmu head_magic
-#endif
 	mrs	x22, midr_el1			// x22=cpuid
 	mov	x0, x22
 	bl	lookup_processor_type
@@ -591,9 +580,6 @@ ENTRY(__secondary_switched)
 	 */
 	get_thread_info tsk
 	load_key tsk
-#endif
-#ifdef CONFIG_RKP_CFP_JOPP
-	load_function_entry_magic_number_before_reloc head_magic
 #endif
 	mov	x29, #0
 	b	secondary_start_kernel

@@ -84,6 +84,10 @@ static void enable_sensor(struct ssp_data *data,
 #endif
 			set_proximity_threshold(data);
 		}
+		
+		if (iSensorType == PROXIMITY_ALERT_SENSOR) {
+			set_proximity_alert_threshold(data);
+		}
 
 #ifdef CONFIG_SENSORS_SSP_IRDATA_FOR_CAMERA
 		if(iSensorType == LIGHT_SENSOR || iSensorType == LIGHT_IR_SENSOR) {
@@ -280,7 +284,6 @@ static ssize_t set_enable_irq(struct device *dev,
 		return -1;
 
 	pr_info("[SSP] %s - %d start\n", __func__, dTemp);
-	mutex_lock(&data->ssp_enable_mutex);
 	if (dTemp) {
 		reset_mcu(data);
 		enable_debug_timer(data);
@@ -289,7 +292,6 @@ static ssize_t set_enable_irq(struct device *dev,
 		ssp_enable(data, 0);
 	} else
 		pr_err("[SSP] %s - invalid value\n", __func__);
-	mutex_unlock(&data->ssp_enable_mutex);
 	pr_info("[SSP] %s - %d end\n", __func__, dTemp);
 	return size;
 }
@@ -356,6 +358,10 @@ static ssize_t set_sensors_enable(struct device *dev,
 						proximity_open_calibration(data);
 #endif
 						set_proximity_threshold(data);
+					}
+					else if(uChangedSensor == PROXIMITY_ALERT_SENSOR)
+					{
+						set_proximity_alert_threshold(data);
 					}
 #ifdef CONFIG_SENSORS_SSP_SX9306
 					else if (uChangedSensor == GRIP_SENSOR) {
@@ -943,6 +949,42 @@ static ssize_t set_data_injection_enable(struct device *dev,
 	return size;
 }
 
+#if defined (CONFIG_SENSORS_SSP_VLTE)
+static ssize_t show_lcd_check_fold_state(struct device *dev,
+	struct device_attribute *attr, char *buf)
+{
+	struct ssp_data *data  = dev_get_drvdata(dev);
+	return sprintf(buf, "%d\n", data->change_axis);
+	
+}
+
+static ssize_t set_lcd_check_fold_state(struct device *dev,
+	struct device_attribute *attr, const char *buf, size_t size)
+{
+	struct ssp_data *data = dev_get_drvdata(dev);
+
+	if(folder_state == 1) // folding state
+	{
+		data->change_axis = true;
+		pr_err("[SSP]: %s - change_axis %d\n", __func__, data->change_axis);
+	}
+	else // spread state
+	{
+		data->change_axis = false;
+		pr_err("[SSP]: %s - change_axis %d\n", __func__, data->change_axis);
+	}
+	
+	return size;
+}
+#endif
+
+static ssize_t show_sensor_state(struct device *dev,
+	struct device_attribute *attr, char *buf)
+{
+	struct ssp_data *data  = dev_get_drvdata(dev);
+	return sprintf(buf, "%s\n", data->sensor_state);
+}
+
 static DEVICE_ATTR(mcu_rev, S_IRUGO, mcu_revision_show, NULL);
 static DEVICE_ATTR(mcu_name, S_IRUGO, mcu_model_name_show, NULL);
 static DEVICE_ATTR(mcu_update, S_IRUGO, mcu_update_kernel_bin_show, NULL);
@@ -1018,6 +1060,13 @@ static struct device_attribute dev_attr_step_cnt_poll_delay
 static DEVICE_ATTR(data_injection_enable, S_IRUGO | S_IWUSR | S_IWGRP,
 	show_data_injection_enable, set_data_injection_enable);
 
+#if defined (CONFIG_SENSORS_SSP_VLTE)
+static DEVICE_ATTR(lcd_check_fold_state, S_IRUGO | S_IWUSR | S_IWGRP,
+	show_lcd_check_fold_state, set_lcd_check_fold_state);
+#endif
+
+static DEVICE_ATTR(sensor_state, S_IRUGO, show_sensor_state, NULL);
+
 static struct device_attribute *mcu_attrs[] = {
 	&dev_attr_enable,
 	&dev_attr_mcu_rev,
@@ -1044,6 +1093,10 @@ static struct device_attribute *mcu_attrs[] = {
 	&dev_attr_ssp_flush,
 	&dev_attr_shake_cam,
 	&dev_attr_data_injection_enable,
+#if defined (CONFIG_SENSORS_SSP_VLTE)
+	&dev_attr_lcd_check_fold_state,
+#endif
+	&dev_attr_sensor_state,
 	NULL,
 };
 
@@ -1241,6 +1294,17 @@ static struct file_operations ssp_data_injection_fops = {
 
 };
 
+#if defined (CONFIG_SENSORS_SSP_VLTE)
+int folder_state;
+int ssp_ckeck_lcd(int state)
+{
+	folder_state = state;
+	pr_info("[SSP] %s folder_state %d \n", __func__, folder_state);
+
+	return folder_state;
+}
+#endif
+
 static void initialize_mcu_factorytest(struct ssp_data *data)
 {
 	sensors_register(data->mcu_device, data, mcu_attrs, "ssp_sensor");
@@ -1305,8 +1369,11 @@ int initialize_sysfs(struct ssp_data *data)
 	initialize_pressure_factorytest(data);
 	initialize_magnetic_factorytest(data);
 	initialize_mcu_factorytest(data);
+#ifdef CONFIG_SENSORS_SSP_TMG399x
 	initialize_gesture_factorytest(data);
-#ifdef CONFIG_SENSORS_SSP_TMD4903
+#endif
+
+#ifdef CONFIG_SENSORS_SSP_IRLED
 	initialize_irled_factorytest(data);
 #endif
 #ifdef CONFIG_SENSORS_SSP_SHTC1
@@ -1317,6 +1384,9 @@ int initialize_sysfs(struct ssp_data *data)
 #endif
 #ifdef CONFIG_SENSORS_SSP_SX9306
 	initialize_grip_factorytest(data);
+#endif
+#ifdef CONFIG_SENSORS_SSP_LIGHT_COLORID
+	initialize_hiddenhole_factorytest(data);
 #endif
 	/*snamy.jeong_0630 voice dump & data*/
 	initialize_voice_sysfs(data);
@@ -1394,8 +1464,10 @@ void remove_sysfs(struct ssp_data *data)
 	remove_pressure_factorytest(data);
 	remove_magnetic_factorytest(data);
 	remove_mcu_factorytest(data);
+#ifdef CONFIG_SENSORS_SSP_TMG399x
 	remove_gesture_factorytest(data);
-#ifdef CONFIG_SENSORS_SSP_TMD4903
+#endif
+#ifdef CONFIG_SENSORS_SSP_IRLED
 	remove_irled_factorytest(data);
 #endif
 #ifdef CONFIG_SENSORS_SSP_SHTC1
@@ -1406,6 +1478,9 @@ void remove_sysfs(struct ssp_data *data)
 #endif
 #ifdef CONFIG_SENSORS_SSP_SX9306
 	remove_grip_factorytest(data);
+#endif
+#ifdef CONFIG_SENSORS_SSP_LIGHT_COLORID
+	remove_hiddenhole_factorytest(data);
 #endif
 	/*snamy.jeong_0630 voice dump & data*/
 	remove_voice_sysfs(data);

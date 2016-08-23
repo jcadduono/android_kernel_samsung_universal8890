@@ -1232,6 +1232,9 @@ int fimc_is_itf_s_param(struct fimc_is_device_ischain *device,
 	BUG_ON(!device);
 
 	if (frame) {
+		frame->lindex |= lindex;
+		frame->hindex |= hindex;
+
 		dst_base = (ulong)&device->is_region->parameter;
 		src_base = (ulong)frame->shot->ctl.vendor_entry.parameter;
 
@@ -1829,7 +1832,7 @@ int fimc_is_itf_stream_on(struct fimc_is_device_ischain *device)
 			minfo("[ISC:D] tbl[%d] static scenario(%d)-[%s]\n", device,
 				dvfs_ctrl->dvfs_table_idx, scenario_id,
 				static_ctrl->scenarios[static_ctrl->cur_scenario_idx].scenario_nm);
-			fimc_is_set_dvfs(device, scenario_id);
+			fimc_is_set_dvfs((struct fimc_is_core *)device->interface->core, device, scenario_id);
 		}
 
 		mutex_unlock(&dvfs_ctrl->lock);
@@ -3771,8 +3774,10 @@ static int fimc_is_ischain_start(struct fimc_is_device_ischain *device)
 	/* previous fd infomation should be clear */
 	memset(&device->cur_peri_ctl.fdUd, 0x0, sizeof(struct camera2_fd_uctl));
 
+#ifdef ENABLE_ULTRA_FAST_SHOT
 	memset(&device->fastctlmgr, 0x0, sizeof(struct fast_control_mgr));
-	memset(&device->is_region->FastControl, 0x0, sizeof(IS_FastControlStr));
+	memset(&device->is_region->fast_ctl, 0x0, sizeof(struct is_fast_control));
+#endif
 
 	ret = fimc_is_itf_sensor_mode(device);
 	if (ret) {
@@ -5719,8 +5724,8 @@ static void fimc_is_ischain_update_shot(struct fimc_is_device_ischain *device,
 	struct fimc_is_frame *frame)
 {
 #ifdef ENABLE_ULTRA_FAST_SHOT
-	if (device->fastctlmgr.fast_ae_count) {
-		device->fastctlmgr.fast_ae_count--;
+	if (device->fastctlmgr.fast_capture_count) {
+		device->fastctlmgr.fast_capture_count--;
 		frame->shot->ctl.aa.captureIntent = AA_CAPTURE_INTENT_PREVIEW;
 		mrinfo("captureIntent update\n", device, frame);
 	}
@@ -5929,12 +5934,11 @@ static int fimc_is_ischain_3aa_shot(struct fimc_is_device_ischain *device,
 		child = child->child;
 	}
 
-	clear_bit(FIMC_IS_SUBDEV_FORCE_SET, &group->leader.state);
 	PROGRAM_COUNT(10);
 
-p_err:
 	fimc_is_ischain_update_shot(device, frame);
 
+p_err:
 	if (ret) {
 		mgrerr(" SKIP(%d) : %d\n", device, group, check_frame, check_frame->index, ret);
 	} else {
@@ -6092,7 +6096,6 @@ static int fimc_is_ischain_isp_shot(struct fimc_is_device_ischain *device,
 	}
 #endif
 
-	clear_bit(FIMC_IS_SUBDEV_FORCE_SET, &group->leader.state);
 	PROGRAM_COUNT(10);
 
 p_err:
@@ -6218,7 +6221,6 @@ static int fimc_is_ischain_dis_shot(struct fimc_is_device_ischain *device,
 		child = child->child;
 	}
 
-	clear_bit(FIMC_IS_SUBDEV_FORCE_SET, &group->leader.state);
 	PROGRAM_COUNT(10);
 
 p_err:
@@ -6333,7 +6335,6 @@ static int fimc_is_ischain_mcs_shot(struct fimc_is_device_ischain *device,
 		child = child->child;
 	}
 
-	clear_bit(FIMC_IS_SUBDEV_FORCE_SET, &group->leader.state);
 	PROGRAM_COUNT(10);
 
 p_err:

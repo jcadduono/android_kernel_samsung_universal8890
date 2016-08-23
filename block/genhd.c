@@ -1202,6 +1202,7 @@ static int diskstats_show(struct seq_file *seqf, void *v)
 	struct hd_struct *hd;
 	char buf[BDEVNAME_SIZE];
 	int cpu;
+	u64 uptime;
 
 	/*
 	if (&disk_to_dev(gp)->kobj.entry == block_class.devices.next)
@@ -1216,8 +1217,11 @@ static int diskstats_show(struct seq_file *seqf, void *v)
 		cpu = part_stat_lock();
 		part_round_stats(cpu, hd);
 		part_stat_unlock();
+		uptime = ktime_to_ns(ktime_get());
+		uptime /= 1000000; /* in ms */
 		seq_printf(seqf, "%4d %7d %s %lu %lu %lu "
-			   "%u %lu %lu %lu %u %u %u %u\n",
+			   "%u %lu %lu %lu %u %u %u %u "
+			   "%lu %lu %lu %lu %llu %lu.%03lu\n",
 			   MAJOR(part_devt(hd)), MINOR(part_devt(hd)),
 			   disk_name(gp, hd->partno, buf),
 			   part_stat_read(hd, ios[READ]),
@@ -1230,7 +1234,14 @@ static int diskstats_show(struct seq_file *seqf, void *v)
 			   jiffies_to_msecs(part_stat_read(hd, ticks[WRITE])),
 			   part_in_flight(hd),
 			   jiffies_to_msecs(part_stat_read(hd, io_ticks)),
-			   jiffies_to_msecs(part_stat_read(hd, time_in_queue))
+			   jiffies_to_msecs(part_stat_read(hd, time_in_queue)),
+			   part_stat_read(hd, discard_ios),
+			   part_stat_read(hd, discard_sectors),
+			   part_stat_read(hd, flush_ios),
+			   gp->queue->flush_ios,
+			   gp->queue->in_flight_time / USEC_PER_MSEC,
+			   (unsigned long)(uptime / 1000),
+			   (unsigned long)(uptime % 1000)
 			);
 	}
 	disk_part_iter_exit(&piter);

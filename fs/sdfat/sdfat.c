@@ -92,7 +92,7 @@ static int sdfat_get_block(struct inode *inode, sector_t iblock,
 
 static struct inode *sdfat_iget(struct super_block *sb, loff_t i_pos);
 static int sdfat_sync_inode(struct inode *inode);
-static struct inode *sdfat_build_inode(struct super_block *sb, FILE_ID_T *fid, loff_t i_pos);
+static struct inode *sdfat_build_inode(struct super_block *sb, const FILE_ID_T *fid, loff_t i_pos);
 static void sdfat_detach(struct inode *inode);
 static void sdfat_attach(struct inode *inode, loff_t i_pos);
 static inline unsigned long sdfat_hash(loff_t i_pos);
@@ -144,6 +144,12 @@ static ssize_t sdfat_direct_IO(int rw, struct kiocb *iocb,
 
 	return __sdfat_direct_IO(rw, iocb, inode, (void*)iter, offset, count);
 }
+
+static inline int sdfat_remount_syncfs(struct super_block *sb)
+{
+	sync_filesystem(sb);
+	return 0;
+}
 #else /* LINUX_VERSION_CODE >= KERNEL_VERSION(3,16,0) */
 static ssize_t sdfat_direct_IO(int rw, struct kiocb *iocb,
 	   const struct iovec *iov, loff_t offset, unsigned long nr_segs)
@@ -155,8 +161,16 @@ static ssize_t sdfat_direct_IO(int rw, struct kiocb *iocb,
 	
 	return __sdfat_direct_IO(rw, iocb, inode, (void*)iov, offset, count);
 }
-#endif /* LINUX_VERSION_CODE >= KERNEL_VERSION(3,16,0) */
 
+static inline int sdfat_remount_syncfs(struct super_block *sb)
+{
+	/*
+	 * We don`t need to call sync_filesystem(sb),
+	 * Because VFS calls it.
+	 */
+	return 0;
+}
+#endif /* LINUX_VERSION_CODE >= KERNEL_VERSION(3,16,0) */
 
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3,14,0)
@@ -415,7 +429,7 @@ get_new:
 		inum = parent_ino(filp->f_path.dentry);
 	} else {
 		loff_t i_pos = ((loff_t) SDFAT_I(inode)->fid.start_clu << 32) |
-					   ((SDFAT_I(inode)->fid.rwoffset-1) & 0xffffffff);
+			   ((SDFAT_I(inode)->fid.rwoffset-1) & 0xffffffff);
 
 		struct inode *tmp = sdfat_iget(sb, i_pos);
 		if (tmp) {
@@ -618,9 +632,7 @@ static struct inode *sdfat_iget(struct super_block *sb, loff_t i_pos) {
 	spin_unlock(&sbi->inode_hash_lock);
 	return inode;
 }
-
 #endif /* LINUX_VERSION_CODE >= KERNEL_VERSION(3,7,0) */
-
 
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3,6,0)
@@ -674,7 +686,6 @@ static inline gid_t make_kgid(struct user_namespace *from, gid_t gid)
 	return gid;
 }
 #endif /* LINUX_VERSION_CODE >= KERNEL_VERSION(3,5,0) */
-
 
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3,4,0)
@@ -749,7 +760,6 @@ static int sdfat_show_options(struct seq_file *m, struct vfsmount *mnt)
 	return __sdfat_show_options(m, mnt->mnt_sb);
 }
 #endif /* LINUX_VERSION_CODE >= KERNEL_VERSION(3,4,0) */
-
 
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3,1,0)
@@ -856,6 +866,10 @@ static inline void __unlock_super(struct super_block *sb)
 /*************************************************************************
  * NORMAL FUNCTIONS
  *************************************************************************/
+static inline loff_t sdfat_make_i_pos(FILE_ID_T *fid)
+{
+	return ((loff_t) fid->dir.dir << 32) | (fid->entry & 0xffffffff);
+}
 
 /*======================================================================*/
 /*  Directory Entry Name Buffer Operations                              */
@@ -891,6 +905,32 @@ static void sdfat_free_namebuf(DENTRY_NAMEBUF_T* nb)
 /*======================================================================*/
 /*  Directory Entry Operations                                          */
 /*======================================================================*/
+#define SDFAT_DSTATE_LOCKED	(void *)(0xCAFE2016)
+#define SDFAT_DSTATE_UNLOCKED	(void *)(0x00000000)
+
+static inline void __lock_d_revalidate(struct dentry *dentry)
+{
+	spin_lock(&dentry->d_lock);
+	dentry->d_fsdata = SDFAT_DSTATE_LOCKED;
+	spin_unlock(&dentry->d_lock);
+}
+
+static inline void __unlock_d_revalidate(struct dentry *dentry)
+{
+	spin_lock(&dentry->d_lock);
+	dentry->d_fsdata = SDFAT_DSTATE_UNLOCKED;
+	spin_unlock(&dentry->d_lock);
+}
+
+/* __check_dstate_locked requires dentry->d_lock */
+static inline int __check_dstate_locked(struct dentry *dentry)
+{
+	if (dentry->d_fsdata == SDFAT_DSTATE_LOCKED)
+		return 1;
+
+	return 0;
+}
+
 /*
  * If new entry was created in the parent, it could create the 8.3
  * alias (the shortname of logname).  So, the parent may have the
@@ -901,21 +941,14 @@ static void sdfat_free_namebuf(DENTRY_NAMEBUF_T* nb)
  */
 static int __sdfat_revalidate_common(struct dentry *dentry)
 {
-	/* FIXME :
-	 * There was some problems related to dentry.
-	 * So, we need to review below codes.
-	 * Before that, we alway invalidate negative dentry.
-	 */
-
-	/*
-	   int ret = 1;
-	   spin_lock(&dentry->d_lock);
-	   if (dentry->d_time != dentry->d_parent->d_inode->i_version)
-	   ret = 0;
-	   spin_unlock(&dentry->d_lock);
-	   return ret;
-	 */
-	return 0;
+	int ret = 1;
+	spin_lock(&dentry->d_lock);
+	if (!__check_dstate_locked(dentry) &&
+		(dentry->d_time != dentry->d_parent->d_inode->i_version)) {
+		ret = 0;
+	}
+	spin_unlock(&dentry->d_lock);
+	return ret;
 }
 
 static int __sdfat_revalidate(struct dentry *dentry)
@@ -1997,7 +2030,9 @@ static int __sdfat_create(struct inode *dir, struct dentry *dentry)
 	err = fsapi_create(dir, (u8 *) dentry->d_name.name, FM_REGULAR, &fid);
 	if (err)
 		goto out;
-	
+
+	__lock_d_revalidate(dentry);
+
 	dir->i_version++;
 	dir->i_ctime = dir->i_mtime = dir->i_atime = ts;
 	if (IS_DIRSYNC(dir))
@@ -2005,8 +2040,7 @@ static int __sdfat_create(struct inode *dir, struct dentry *dentry)
 	else
 		mark_inode_dirty(dir);
 
-	i_pos = ((loff_t) fid.dir.dir << 32) | (fid.entry & 0xffffffff);
-
+	i_pos = sdfat_make_i_pos(&fid);
 	inode = sdfat_build_inode(sb, &fid, i_pos);
 	if (IS_ERR(inode)) {
 		err = PTR_ERR(inode);
@@ -2016,10 +2050,9 @@ static int __sdfat_create(struct inode *dir, struct dentry *dentry)
 	inode->i_mtime = inode->i_atime = inode->i_ctime = ts;
 	/* timestamp is already written, so mark_inode_dirty() is unneeded. */
 
-	dentry->d_time = dentry->d_parent->d_inode->i_version;
 	d_instantiate(dentry, inode);
-
 out:
+	__unlock_d_revalidate(dentry);
 	__unlock_super(sb);
 	TMSG("%s exited with err(%d)\n", __func__, err);
 	return err;
@@ -2067,7 +2100,7 @@ static struct dentry* __sdfat_lookup(struct inode *dir, struct dentry *dentry)
 		goto error;
 	}
 
-	i_pos = ((loff_t) fid.dir.dir << 32) | (fid.entry & 0xffffffff);
+	i_pos = sdfat_make_i_pos(&fid);
 	inode = sdfat_build_inode(sb, &fid, i_pos);
 	if (IS_ERR(inode)) {
 		err = PTR_ERR(inode);
@@ -2086,7 +2119,20 @@ static struct dentry* __sdfat_lookup(struct inode *dir, struct dentry *dentry)
 	}
 
 	alias = d_find_alias(inode);
-	if (alias && !sdfat_d_anon_disconn(alias)) {
+
+	/*
+	 * Checking "alias->d_parent == dentry->d_parent" to make sure
+	 * FS is not corrupted (especially double linked dir).
+	 */
+	if (alias && alias->d_parent == dentry->d_parent &&
+	    !sdfat_d_anon_disconn(alias)) {
+		/*
+		 * This inode has non anonymous-DCACHE_DISCONNECTED
+		 * dentry. This means, the user did ->lookup() by an
+		 * another name (longname vs 8.3 alias of it) in past.
+		 *
+		 * Switch to new one for reason of locality if possible.
+		 */
 		BUG_ON(d_unhashed(alias));
 		if (!S_ISDIR(i_mode))
 			d_move(alias, dentry);
@@ -2098,16 +2144,14 @@ static struct dentry* __sdfat_lookup(struct inode *dir, struct dentry *dentry)
 		dput(alias);
 	}
 out:
+	/* initialize d_time even though it is positive dentry */
+	dentry->d_time = dir->i_version;
 	__unlock_super(sb);
 
-	dentry->d_time = dentry->d_parent->d_inode->i_version;
 	dentry = d_splice_alias(inode, dentry);
-	if (dentry)
-		dentry->d_time = dentry->d_parent->d_inode->i_version;
 
 	TMSG("%s exited\n", __func__);
 	return dentry;
-
 error:
 	__unlock_super(sb);
 	TMSG("%s exited with err(%d)\n", __func__, err);
@@ -2136,6 +2180,8 @@ static int sdfat_unlink(struct inode *dir, struct dentry *dentry)
 	if (err)
 		goto out;
 
+	__lock_d_revalidate(dentry);
+
 	dir->i_version++;
 	dir->i_mtime = dir->i_atime = ts;
 	if (IS_DIRSYNC(dir))
@@ -2146,8 +2192,9 @@ static int sdfat_unlink(struct inode *dir, struct dentry *dentry)
 	clear_nlink(inode);
 	inode->i_mtime = inode->i_atime = ts;
 	sdfat_detach(inode);
-
+	dentry->d_time = dir->i_version;
 out:
+	__unlock_d_revalidate(dentry);
 	__unlock_super(sb);
 	TMSG("%s exited with err(%d)\n", __func__, err);
 	return err;
@@ -2185,6 +2232,8 @@ static int sdfat_symlink(struct inode *dir, struct dentry *dentry, const char *t
 		goto out;
 	}
 
+	__lock_d_revalidate(dentry);
+
 	dir->i_version++;
 	dir->i_ctime = dir->i_mtime = dir->i_atime = ts;
 	if (IS_DIRSYNC(dir))
@@ -2192,8 +2241,7 @@ static int sdfat_symlink(struct inode *dir, struct dentry *dentry, const char *t
 	else
 		mark_inode_dirty(dir);
 
-	i_pos = ((loff_t) fid.dir.dir << 32) | (fid.entry & 0xffffffff);
-
+	i_pos = sdfat_make_i_pos(&fid);
 	inode = sdfat_build_inode(sb, &fid, i_pos);
 	if (IS_ERR(inode)) {
 		err = PTR_ERR(inode);
@@ -2210,10 +2258,9 @@ static int sdfat_symlink(struct inode *dir, struct dentry *dentry, const char *t
 	}
 	memcpy(SDFAT_I(inode)->target, target, len+1);
 
-	dentry->d_time = dentry->d_parent->d_inode->i_version;
 	d_instantiate(dentry, inode);
-
 out:
+	__unlock_d_revalidate(dentry);
 	__unlock_super(sb);
 	TMSG("%s exited with err(%d)\n", __func__, err);
 	return err;
@@ -2239,6 +2286,8 @@ static int __sdfat_mkdir(struct inode *dir, struct dentry *dentry)
 	if (err)
 		goto out;
 
+	__lock_d_revalidate(dentry);
+
 	dir->i_version++;
 	dir->i_ctime = dir->i_mtime = dir->i_atime = ts;
 	if (IS_DIRSYNC(dir))
@@ -2247,8 +2296,7 @@ static int __sdfat_mkdir(struct inode *dir, struct dentry *dentry)
 		mark_inode_dirty(dir);
 	inc_nlink(dir);
 
-	i_pos = ((loff_t) fid.dir.dir << 32) | (fid.entry & 0xffffffff);
-
+	i_pos = sdfat_make_i_pos(&fid);
 	inode = sdfat_build_inode(sb, &fid, i_pos);
 	if (IS_ERR(inode)) {
 		err = PTR_ERR(inode);
@@ -2258,10 +2306,10 @@ static int __sdfat_mkdir(struct inode *dir, struct dentry *dentry)
 	inode->i_mtime = inode->i_atime = inode->i_ctime = ts;
 	/* timestamp is already written, so mark_inode_dirty() is unneeded. */
 
-	dentry->d_time = dentry->d_parent->d_inode->i_version;
 	d_instantiate(dentry, inode);
 
 out:
+	__unlock_d_revalidate(dentry);
 	__unlock_super(sb);
 	TMSG("%s exited with err(%d)\n", __func__, err);
 	return err;
@@ -2286,7 +2334,9 @@ static int sdfat_rmdir(struct inode *dir, struct dentry *dentry)
 	err = fsapi_rmdir(dir, &(SDFAT_I(inode)->fid));
 	if (err)
 		goto out;
-	
+
+	__lock_d_revalidate(dentry);
+
 	dir->i_version++;
 	dir->i_mtime = dir->i_atime = ts;
 	if (IS_DIRSYNC(dir))
@@ -2298,7 +2348,9 @@ static int sdfat_rmdir(struct inode *dir, struct dentry *dentry)
 	clear_nlink(inode);
 	inode->i_mtime = inode->i_atime = ts;
 	sdfat_detach(inode);
+	dentry->d_time = dir->i_version;
 out:
+	__unlock_d_revalidate(dentry);
 	__unlock_super(sb);
 	TMSG("%s exited with err(%d)\n", __func__, err);
 	return err;
@@ -2329,7 +2381,10 @@ static int sdfat_rename(struct inode *old_dir, struct dentry *old_dentry,
 	err = fsapi_rename(old_dir, &(SDFAT_I(old_inode)->fid), new_dir, new_dentry);
 	if (err)
 		goto out;
-	
+
+	__lock_d_revalidate(old_dentry);
+	__lock_d_revalidate(new_dentry);
+
 	new_dir->i_version++;
 	new_dir->i_ctime = new_dir->i_mtime = new_dir->i_atime = ts;
 	if (IS_DIRSYNC(new_dir))
@@ -2337,9 +2392,7 @@ static int sdfat_rename(struct inode *old_dir, struct dentry *old_dentry,
 	else
 		mark_inode_dirty(new_dir);
 
-	i_pos = ((loff_t) SDFAT_I(old_inode)->fid.dir.dir << 32) |
-			(SDFAT_I(old_inode)->fid.entry & 0xffffffff);
-
+	i_pos = sdfat_make_i_pos(&(SDFAT_I(old_inode)->fid));
 	sdfat_detach(old_inode);
 	sdfat_attach(old_inode, i_pos);
 	if (IS_DIRSYNC(new_dir))
@@ -2361,9 +2414,17 @@ static int sdfat_rename(struct inode *old_dir, struct dentry *old_dentry,
 
 	if (new_inode) {
 		sdfat_detach(new_inode);
-		drop_nlink(new_inode);
-		if (S_ISDIR(new_inode->i_mode))
+
+		/* skip drop_nlink if new_inode already has been dropped */
+		if (new_inode->i_nlink) {
 			drop_nlink(new_inode);
+			if (S_ISDIR(new_inode->i_mode))
+				drop_nlink(new_inode);
+		} else {
+			EMSG("%s : abnormal access to an inode dropped\n",
+				__func__);
+			WARN_ON(new_inode->i_nlink == 0);
+		}
 		new_inode->i_ctime = ts;
 #if 0
 		(void) sdfat_sync_inode(new_inode);
@@ -2371,6 +2432,8 @@ static int sdfat_rename(struct inode *old_dir, struct dentry *old_dentry,
 	}
 
 out:
+	__unlock_d_revalidate(old_dentry);
+	__unlock_d_revalidate(new_dentry);
 	__unlock_super(sb);
 	TMSG("%s exited with err(%d)\n", __func__, err);
 	return err;
@@ -3496,7 +3559,7 @@ static void sdfat_detach(struct inode *inode)
 
 
 /* doesn't deal with root inode */
-static int sdfat_fill_inode(struct inode *inode, FILE_ID_T *fid)
+static int sdfat_fill_inode(struct inode *inode, const FILE_ID_T *fid)
 {
 	struct sdfat_sb_info *sbi = SDFAT_SB(inode->i_sb);
 	FS_INFO_T *fsi = &(sbi->fsi);
@@ -3569,7 +3632,7 @@ static int sdfat_fill_inode(struct inode *inode, FILE_ID_T *fid)
 }
 
 static struct inode *sdfat_build_inode(struct super_block *sb,
-					   FILE_ID_T *fid, loff_t i_pos) {
+				   const FILE_ID_T *fid, loff_t i_pos) {
 	struct inode *inode;
 	int err;
 
@@ -3883,6 +3946,8 @@ static int sdfat_remount(struct super_block *sb, int *flags, char *data)
 {
 	char *orig_data = kstrdup(data, GFP_KERNEL);
 	*flags |= MS_NODIRATIME;
+
+	sdfat_remount_syncfs(sb);
 
 	sdfat_log_msg(sb, KERN_INFO, "re-mounted. Opts: %s", orig_data);
 	kfree(orig_data);	
@@ -4349,6 +4414,15 @@ out:
 			sdfat_iocharset_with_utf8);
 	}
 
+	if (opts->discard) {
+		struct request_queue *q = bdev_get_queue(sb->s_bdev);
+		if (!blk_queue_discard(q))
+			sdfat_msg(sb, KERN_WARNING,
+				"mounting with \"discard\" option, but "
+				"the device does not support discard");
+		opts->discard = 0;
+	}
+
 	return 0;
 }
 
@@ -4379,7 +4453,10 @@ static int sdfat_read_root(struct inode *inode)
 	SDFAT_I(inode)->fid.flags = 0x01;
 	SDFAT_I(inode)->fid.type = TYPE_DIR;
 	SDFAT_I(inode)->fid.rwoffset = 0;
-	SDFAT_I(inode)->fid.hint_last_off = -1;
+	SDFAT_I(inode)->fid.hint_bmap.off = -1;
+
+	SDFAT_I(inode)->fid.hint_stat.eidx = 0;
+	SDFAT_I(inode)->fid.hint_stat.clu = fsi->root_dir;
 
 	SDFAT_I(inode)->target = NULL;
 

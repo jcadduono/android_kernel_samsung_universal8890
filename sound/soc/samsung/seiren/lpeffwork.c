@@ -131,13 +131,13 @@ static ssize_t lpeff_show(struct device *dev,
 
 static DEVICE_ATTR(lpeff, S_IRUGO, lpeff_show, NULL);
 
-int lpeff_init(struct seiren_info si)
+int lpeff_init(struct seiren_info *si)
 {
 	int ret = 0;
 
-	memcpy(&g_si, &si, sizeof(struct seiren_info));
+	memcpy(&g_si, si, sizeof(struct seiren_info));
 #ifndef CONFIG_SOC_EXYNOS8890
-	g_effect_addr = si.effect_ram;
+	g_effect_addr = si->effect_ram;
 	printk("g_effect_addr = 0x%p \n", g_effect_addr);
 #endif
 

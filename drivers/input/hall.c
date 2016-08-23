@@ -192,7 +192,7 @@ static void flip_cover_work(struct work_struct *work)
 		comp_val[i] = gpio_get_value(ddata->gpio_flip_cover);
 		if(comp_val[i]!=comp_val[0]){
 			pr_err("%s : Value is not same!\n", __func__);
-			goto out; 
+			goto out;
 		}
 	}
 

@@ -1444,7 +1444,7 @@
 		max77854@66 {
 			compatible = "maxim,max77854";
 			pinctrl-names = "default";
-			pinctrl-0 = <&max77854_irq &vibetonz_pwm &pwm_tout1>;
+			pinctrl-0 = <&max77854_irq &pwm_tout1>;
 			reg = <0x66>;
 			max77854,irq-gpio = <&gpa1 6 1>;
 			muic-universal,irq-gpio = <&gpa1 6 1>;
@@ -2413,6 +2413,18 @@
 				video_high_speed_240fps_i2c = <0>;
 				video_high_speed_240fps_hpg = <1>;
 
+				ext_rear_int = <DVFS_INT_L4>;
+				ext_rear_cam = <DVFS_CAM_L0>;
+				ext_rear_mif = <DVFS_MIF_L6>;
+				ext_rear_i2c = <0>;
+				ext_rear_hpg = <1>;
+
+				ext_front_int = <DVFS_INT_L5>;
+				ext_front_cam = <DVFS_CAM_L0>;
+				ext_front_mif = <DVFS_MIF_L6>;
+				ext_front_i2c = <0>;
+				ext_front_hpg = <1>;
+
 				max_int = <DVFS_INT_L0>;
 				max_cam = <DVFS_CAM_L0>;
 				max_mif = <DVFS_MIF_L0>;
@@ -2614,6 +2626,18 @@
 				video_high_speed_240fps_mif = <DVFS_MIF_L2>;
 				video_high_speed_240fps_i2c = <0>;
 				video_high_speed_240fps_hpg = <1>;
+
+				ext_rear_int = <DVFS_INT_L4>;
+				ext_rear_cam = <DVFS_CAM_L0>;
+				ext_rear_mif = <DVFS_MIF_L6>;
+				ext_rear_i2c = <0>;
+				ext_rear_hpg = <1>;
+
+				ext_front_int = <DVFS_INT_L5>;
+				ext_front_cam = <DVFS_CAM_L0>;
+				ext_front_mif = <DVFS_MIF_L6>;
+				ext_front_i2c = <0>;
+				ext_front_hpg = <1>;
 
 				max_int = <DVFS_INT_L0>;
 				max_cam = <DVFS_CAM_L0>;

@@ -177,8 +177,8 @@ static void get_timestamp(struct ssp_data *data, char *pchRcvDataFrame,
 						if(data->lastTimestamp[sensor_type] > data->ts_index_buffer[tmpIndex])
 						{
 							//pr_err("[SSP_TIM] %d after avg + DT %lld", sensor_type, time_delta_ns);
-							pr_err("[SSP] %s - %d using delta last=%llu buf=%llu delta=%llu\n",
-								__func__,sensor_type,data->lastTimestamp[sensor_type],data->ts_index_buffer[tmpIndex],tmp_ts_delta);
+							//pr_err("[SSP] %s - %d using delta last=%llu buf=%llu delta=%llu\n",
+							//	__func__,sensor_type,data->lastTimestamp[sensor_type],data->ts_index_buffer[tmpIndex],tmp_ts_delta);
 							data->lastTimestamp[sensor_type] = data->lastTimestamp[sensor_type] + tmp_ts_delta;
 						}
 						else
@@ -190,13 +190,13 @@ static void get_timestamp(struct ssp_data *data, char *pchRcvDataFrame,
 						//pr_err("[SSP_TIM] %d +avg %lld\n",sensor_type, tmp_ts_avg);
 						if(data->lastTimestamp[sensor_type] + tmp_ts_avg + 5000000000ULL < cur_timestamp)
 						{
-							pr_info("[SSP] %s - %d 5s buf=%llu cur=%llu\n",__func__,sensor_type,data->ts_index_buffer[tmpIndex],cur_timestamp);
+							//pr_info("[SSP] %s - %d 5s buf=%llu cur=%llu\n",__func__,sensor_type,data->ts_index_buffer[tmpIndex],cur_timestamp);
 							data->lastTimestamp[sensor_type] = data->ts_index_buffer[tmpIndex];
 						}
 						else if(data->lastTimestamp[sensor_type] + tmp_ts_avg > cur_timestamp)
 						{						
-							pr_info("[SSP] %s - %d curtime cur=%llu last=%llu buf=%llu avg=%llu\n",
-								__func__,sensor_type,cur_timestamp,data->lastTimestamp[sensor_type],data->ts_index_buffer[tmpIndex],tmp_ts_avg);
+							//pr_info("[SSP] %s - %d curtime cur=%llu last=%llu buf=%llu avg=%llu\n",
+							//	__func__,sensor_type,cur_timestamp,data->lastTimestamp[sensor_type],data->ts_index_buffer[tmpIndex],tmp_ts_avg);
 							data->lastTimestamp[sensor_type] = cur_timestamp;
 						}						
 						else
@@ -243,7 +243,7 @@ static void generate_data(struct ssp_data *data,
 #ifdef CONFIG_SENSORS_SSP_SX9306
 		&& (iSensorData != GRIP_SENSOR)
 #endif
-		) {
+		&& (iSensorData != PROXIMITY_ALERT_SENSOR)) {
 		while ((move_timestamp * 10 + data->adDelayBuf[iSensorData] * 13) < (timestamp * 10)) {
 			move_timestamp += data->adDelayBuf[iSensorData];
 			sensorsdata->timestamp = move_timestamp;
@@ -332,8 +332,13 @@ static void get_step_det_sensordata(char *pchRcvDataFrame, int *iDataIdx,
 static void get_light_sensordata(char *pchRcvDataFrame, int *iDataIdx,
 	struct sensor_value *sensorsdata)
 {
+#ifdef CONFIG_SENSORS_SSP_LIGHT_REPORT_LUX
+	memcpy(sensorsdata, pchRcvDataFrame + *iDataIdx, 18);
+	*iDataIdx += 18;
+#else
 	memcpy(sensorsdata, pchRcvDataFrame + *iDataIdx, 10);
 	*iDataIdx += 10;
+#endif
 }
 
 #ifdef CONFIG_SENSORS_SSP_IRDATA_FOR_CAMERA
@@ -369,12 +374,21 @@ static void get_proximity_sensordata(char *pchRcvDataFrame, int *iDataIdx,
 	memset(&sensorsdata->prox[0], 0, 1);
 	memcpy(&sensorsdata->prox[0], pchRcvDataFrame + *iDataIdx, 2);
 	*iDataIdx += 2;
-#else	//CONFIG_SENSORS_SSP_TMD4903, CONFIG_SENSORS_SSP_TMD3782
+#else	//CONFIG_SENSORS_SSP_TMD4903, CONFIG_SENSORS_SSP_TMD3782, CONFIG_SENSORS_SSP_TMD4904
 	memset(&sensorsdata->prox[0], 0, 2);
 	memcpy(&sensorsdata->prox[0], pchRcvDataFrame + *iDataIdx, 1);
 	memcpy(&sensorsdata->prox[1], pchRcvDataFrame + *iDataIdx + 1, 2);
 	*iDataIdx += 3;
 #endif
+}
+
+static void get_proximity_alert_sensordata(char *pchRcvDataFrame, int *iDataIdx,
+	struct sensor_value *sensorsdata)
+{
+	memset(&sensorsdata->prox_alert[0], 0, 2);
+	memcpy(&sensorsdata->prox_alert[0], pchRcvDataFrame + *iDataIdx, 1);
+	memcpy(&sensorsdata->prox_alert[1], pchRcvDataFrame + *iDataIdx + 1, 2);
+	*iDataIdx += 3;
 }
 
 static void get_proximity_rawdata(char *pchRcvDataFrame, int *iDataIdx,
@@ -383,7 +397,7 @@ static void get_proximity_rawdata(char *pchRcvDataFrame, int *iDataIdx,
 #if defined(CONFIG_SENSORS_SSP_TMG399x)
 	memcpy(&sensorsdata->prox[0], pchRcvDataFrame + *iDataIdx, 1);
 	*iDataIdx += 1;
-#else	//CONFIG_SENSORS_SSP_TMD4903, CONFIG_SENSORS_SSP_TMD3782
+#else	//CONFIG_SENSORS_SSP_TMD4903, CONFIG_SENSORS_SSP_TMD3782, CONFIG_SENSORS_SSP_TMD4904
 	memcpy(&sensorsdata->prox[0], pchRcvDataFrame + *iDataIdx, 2);
 	*iDataIdx += 2;
 #endif
@@ -603,8 +617,9 @@ void ssp_batch_resume_check(struct ssp_data *data)
 			data->lastTimestamp[GAME_ROTATION_VECTOR] = timestamp - grv_offset;
 		if(proxi_offset > 0)
 			data->lastTimestamp[PROXIMITY_SENSOR] = timestamp - proxi_offset;
-
-		ssp_dbg("[SSP_BAT] resume calc. acc %lld. uncalmag %lld. pressure %lld. GRV %lld proxi %lld\n", acc_offset, uncal_mag_offset, press_offset, grv_offset, proxi_offset);
+		
+		ssp_dbg("[SSP_BAT] resume calc. acc %lld. uncalmag %lld. pressure %lld. GRV %lld proxi %lld \n",
+			acc_offset, uncal_mag_offset, press_offset, grv_offset, proxi_offset);
 	}
 	data->bIsResumed = false;
 	data->resumeTimestamp = 0ULL;
@@ -642,7 +657,7 @@ void ssp_batch_report(struct ssp_data *data)
 			return ;
 		}
 
-		if(count%80 == 0)
+		if(count%25 == 0)
 			usleep_range(1000,1000);
 		//ssp_dbg("[SSP_BAT] cnt %d\n", count);
 		data->get_sensor_data[sensor_type](data->batch_event.batch_data, &idx_data, &sensor_data);
@@ -886,7 +901,8 @@ int parse_dataframe(struct ssp_data *data, char *pchRcvDataFrame, int iLength)
 					data->report_sensor_data[sensor_type](data, &sensorsdata);
 				else if ((sensor_type == PROXIMITY_SENSOR) || (sensor_type == PROXIMITY_RAW)
 						|| (sensor_type == STEP_COUNTER)   || (sensor_type == STEP_DETECTOR)
-						|| (sensor_type == GESTURE_SENSOR) || (sensor_type == SIG_MOTION_SENSOR))
+						|| (sensor_type == GESTURE_SENSOR) || (sensor_type == SIG_MOTION_SENSOR)
+						|| (sensor_type == PROXIMITY_ALERT_SENSOR))
 					data->report_sensor_data[sensor_type](data, &sensorsdata);
 				else
 					pr_err("[SSP]: %s irq_diff is under 1msec (%d)\n", __func__, sensor_type);
@@ -955,6 +971,8 @@ void initialize_function_pointer(struct ssp_data *data)
 	data->get_sensor_data[PRESSURE_SENSOR] = get_pressure_sensordata;
 	data->get_sensor_data[GESTURE_SENSOR] = get_gesture_sensordata;
 	data->get_sensor_data[PROXIMITY_SENSOR] = get_proximity_sensordata;
+	data->get_sensor_data[PROXIMITY_ALERT_SENSOR] = get_proximity_alert_sensordata;
+	
 	data->get_sensor_data[PROXIMITY_RAW] = get_proximity_rawdata;
 #ifdef CONFIG_SENSORS_SSP_SX9306
 	data->get_sensor_data[GRIP_SENSOR] = get_grip_sensordata;
@@ -991,6 +1009,8 @@ void initialize_function_pointer(struct ssp_data *data)
 	data->report_sensor_data[PRESSURE_SENSOR] = report_pressure_data;
 	data->report_sensor_data[GESTURE_SENSOR] = report_gesture_data;
 	data->report_sensor_data[PROXIMITY_SENSOR] = report_prox_data;
+	data->report_sensor_data[PROXIMITY_ALERT_SENSOR] = report_prox_alert_data;
+	
 	data->report_sensor_data[PROXIMITY_RAW] = report_prox_raw_data;
 #ifdef CONFIG_SENSORS_SSP_SX9306
 	data->report_sensor_data[GRIP_SENSOR] = report_grip_data;

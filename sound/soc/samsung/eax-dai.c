@@ -48,7 +48,6 @@
 
 
 #define EAX_CH_MAX	8
-#define EAX_NAME_MAX	PLATFORM_NAME_SIZE
 
 #define EAX_RATES	SNDRV_PCM_RATE_8000_192000
 #define EAX_FMTS	(SNDRV_PCM_FMTBIT_S16_LE | SNDRV_PCM_FMTBIT_S24_LE)
@@ -65,17 +64,6 @@ static struct eax_info {
 	int (*master_dai_suspend)(struct snd_soc_dai *dai);
 	int (*master_dai_resume)(struct snd_soc_dai *dai);
 } ei;
-
-struct ch_info {
-	char				name[EAX_NAME_MAX];
-	struct platform_device		*pdev;
-	struct device			*dev_master;
-	struct s3c_dma_params		*dma_params;
-	struct snd_soc_dai_driver	dai_drv;
-	bool				opened;
-	bool				running;
-	struct list_head		node;
-};
 
 static LIST_HEAD(ch_list);
 
@@ -114,6 +102,7 @@ int eax_dev_register(struct device *dev_master, const char *name,
 		ci->dma_params = dma_params;
 		ci->opened = false;
 		ci->running = false;
+		ci->ch_id = n;
 		ci->dai_drv.name = name;
 		ci->dai_drv.symmetric_rates = 1;
 		ci->dai_drv.probe = eax_dai_probe;

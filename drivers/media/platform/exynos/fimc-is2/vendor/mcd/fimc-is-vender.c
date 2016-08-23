@@ -40,6 +40,9 @@ static bool use_ois_hsi2c;
 static bool use_ois;
 static bool use_module_check;
 static bool is_hw_init_running = false;
+#ifdef CONFIG_SECURE_CAMERA_USE
+static u32  secure_sensor_id;
+#endif
 
 #ifdef CAMERA_PARALLEL_RETENTION_SEQUENCE
 struct workqueue_struct *sensor_pwr_ctrl_wq = 0;
@@ -98,7 +101,9 @@ int fimc_is_vender_probe(struct fimc_is_vender *vender)
 #ifdef CONFIG_SENSOR_RETENTION_USE
 	specific->need_retention_init = true;
 #endif
-
+#ifdef CONFIG_SECURE_CAMERA_USE
+	specific->secure_sensor_id = secure_sensor_id;
+#endif
 	vender->private_data = specific;
 
 #ifdef CAMERA_PARALLEL_RETENTION_SEQUENCE
@@ -152,6 +157,14 @@ int fimc_is_vender_dt(struct device_node *np)
 	if (ret) {
 		probe_err("front_sensor_id read is fail(%d)", ret);
 	}
+
+#ifdef CONFIG_SECURE_CAMERA_USE
+	ret = of_property_read_u32(np, "secure_sensor_id", &secure_sensor_id);
+	if (ret) {
+		probe_err("secure_sensor_id read is fail(%d)", ret);
+		secure_sensor_id = 0;
+	}
+#endif
 
 	check_sensor_vendor = of_property_read_bool(np, "check_sensor_vendor");
 	if (!check_sensor_vendor) {
@@ -1112,8 +1125,9 @@ void fimc_is_vender_itf_open(struct fimc_is_vender *vender, struct sensor_open_e
 #ifdef CONFIG_SENSOR_RETENTION_USE
 	if (((specific->rear_sensor_id == SENSOR_NAME_IMX260 && sysfs_finfo->sensor_version >= 0x06)
 #ifdef CONFIG_PREPROCESSOR_STANDBY_USE
-		|| (specific->rear_sensor_id == SENSOR_NAME_S5K2L1 && sysfs_finfo->sensor_version >= 0xC0))
+		|| (specific->rear_sensor_id == SENSOR_NAME_S5K2L1 && sysfs_finfo->sensor_version >= 0xC0)
 #endif
+		)	
 		&& (force_caldata_dump == false)
 		&& (core->current_position == SENSOR_POSITION_REAR)
 	) {
@@ -1131,8 +1145,12 @@ void fimc_is_vender_itf_open(struct fimc_is_vender *vender, struct sensor_open_e
 #endif
 	{
 		ext_info->use_retention_mode = SENSOR_RETENTION_DISABLE;
-		info("Sensor[id = %d, version = 0x%02x] does not support retention mode.\n",
+		if (core->current_position == SENSOR_POSITION_REAR) {
+			info("Sensor[id = %d, version = 0x%02x] does not support retention mode.\n",
 			specific->rear_sensor_id, sysfs_finfo->sensor_version);
+		} else {
+			info("Front camera does not support retention mode.\n");
+		}
 	}
 
 #if defined(CONFIG_CAMERA_EEPROM_SUPPORT_REAR)

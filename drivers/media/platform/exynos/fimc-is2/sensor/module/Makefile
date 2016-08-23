@@ -26,7 +26,8 @@ fimc-is-module-objs := fimc-is-module-6b2.o \
 		fimc-is-module-3m2.o \
 		fimc-is-module-5e2.o \
 		fimc-is-module-virtual-zebu.o \
-		fimc-is-module-3p3.o
+		fimc-is-module-3p3.o \
+		fimc-is-module-5e6.o
 
 obj-$(CONFIG_MODULE_ALL_INCLUDE) += fimc-is-module.o
 
@@ -59,6 +60,7 @@ obj-$(CONFIG_CAMERA_SENSOR_3M2_OBJ) += fimc-is-module-3m2.o
 obj-$(CONFIG_CAMERA_SENSOR_5E2_OBJ) += fimc-is-module-5e2.o
 obj-$(CONFIG_CAMERA_SENSOR_VIRTUAL_ZEBU_OBJ) += fimc-is-module-virtual-zebu.o
 obj-$(CONFIG_CAMERA_SENSOR_3P3_OBJ) += fimc-is-module-3p3.o
+obj-$(CONFIG_CAMERA_SENSOR_5E6_OBJ) += fimc-is-module-5e6.o
 
 EXTRA_CFLAGS += -Idrivers/media/platform/exynos/fimc-is2
 EXTRA_CFLAGS += -Idrivers/media/platform/exynos/fimc-is2/include

@@ -55,6 +55,7 @@ extern "C" {
 	void   buf_release(struct super_block *sb, UINT32 sec);
 	void   buf_release_all(struct super_block *sb);
 	void   buf_sync(struct super_block *sb);
+	INT32 buf_cache_readahead(struct super_block * sb, UINT32 sec);
 
 #ifdef __cplusplus
 }

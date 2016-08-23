@@ -26,6 +26,9 @@
 #include <linux/exynos-ss.h>
 #include <asm/core_regs.h>
 #include "sched/sched.h"
+#ifdef CONFIG_SEC_DUMP_SUMMARY
+#include <linux/sec_debug.h>
+#endif
 
 #define PANIC_TIMER_STEP 100
 #define PANIC_BLINK_SPD 18
@@ -126,6 +129,10 @@ void panic(const char *fmt, ...)
 	 */
 	if (!test_taint(TAINT_DIE) && oops_in_progress <= 1)
 		dump_stack();
+#endif
+#ifdef CONFIG_SEC_DUMP_SUMMARY
+	sec_debug_save_panic_info(buf,
+		(unsigned long)__builtin_return_address(0));
 #endif
 	sysrq_sched_debug_show();
 	/*

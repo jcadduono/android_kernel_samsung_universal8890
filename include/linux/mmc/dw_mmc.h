@@ -161,6 +161,7 @@ struct dw_mci {
 	struct tasklet_struct	tasklet;
 	u32			tasklet_state;
 	struct work_struct	card_work;
+	u32			card_detect_cnt;
 	unsigned long		pending_events;
 	unsigned long		completed_events;
 	enum dw_mci_state	state;
@@ -220,6 +221,12 @@ struct dw_mci {
 
 	/* Support system power mode */
 	int idle_ip_index;
+
+	/* For argos */
+	unsigned int transferred_cnt;
+
+	/* Sfr dump */
+	struct dw_mci_sfe_ram_dump	*sfr_dump;
 };
 
 /* DMA ops for Internal/External DMAC interface */
@@ -259,7 +266,13 @@ struct dw_mci_dma_ops {
 /* Slot level quirks */
 /* This slot has no write protect */
 #define DW_MCI_SLOT_QUIRK_NO_WRITE_PROTECT	BIT(0)
-
+enum dw_mci_cd_types {
+	DW_MCI_CD_INTERNAL = 1, /* use mmc internal CD line */
+	DW_MCI_CD_EXTERNAL,     /* use external callback */
+	DW_MCI_CD_GPIO,         /* use external gpio pin for CD line */
+	DW_MCI_CD_NONE,         /* no CD line, use polling to detect card */
+	DW_MCI_CD_PERMANENT,    /* no CD line, card permanently wired to host */
+};
 struct dma_pdata;
 
 struct block_settings {
@@ -301,6 +314,7 @@ struct dw_mci_board {
 	unsigned int qos_int_level;
 	unsigned char io_mode;
 
+	enum dw_mci_cd_types cd_type;
 	struct dw_mci_dma_ops *dma_ops;
 	struct dma_pdata *data;
 	struct block_settings *blk_settings;

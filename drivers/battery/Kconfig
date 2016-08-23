@@ -411,3 +411,9 @@ config STORE_MODE
        default n
        help
 	 Say Y to enable CONFIG_STORE_MODE
+
+config BATTERY_NOTIFIER
+	bool "battery notifier"
+	default n
+	help
+	  Say Y to enable battery notifier

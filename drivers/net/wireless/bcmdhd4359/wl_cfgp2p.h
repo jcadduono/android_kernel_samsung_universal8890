@@ -24,7 +24,7 @@
  *
  * <<Broadcom-WL-IPTag/Open:>>
  *
- * $Id: wl_cfgp2p.h 608203 2015-12-24 05:30:44Z $
+ * $Id: wl_cfgp2p.h 635563 2016-05-04 09:26:53Z $
  */
 #ifndef _wl_cfgp2p_h_
 #define _wl_cfgp2p_h_
@@ -358,6 +358,9 @@ wl_cfgp2p_set_p2p_ps(struct bcm_cfg80211 *cfg, struct net_device *ndev, char* bu
 
 extern s32
 wl_cfgp2p_set_p2p_ecsa(struct bcm_cfg80211 *cfg, struct net_device *ndev, char* buf, int len);
+
+extern s32
+wl_cfgp2p_increase_p2p_bw(struct bcm_cfg80211 *cfg, struct net_device *ndev, char* buf, int len);
 
 extern u8 *
 wl_cfgp2p_retreive_p2pattrib(void *buf, u8 element_id);

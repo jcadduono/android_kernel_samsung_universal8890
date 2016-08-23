@@ -33,7 +33,7 @@ extern unsigned long cal_dfs_cached_get_rate(unsigned int id);
 extern unsigned long cal_dfs_get_rate(unsigned int id);
 extern int cal_dfs_get_rate_table(unsigned int id, unsigned long *table);
 extern int cal_dfs_get_asv_table(unsigned int id, unsigned int *table);
-extern unsigned int cal_asv_pmic_info(void);
+extern int cal_asv_pmic_info(void);
 extern int cal_asv_get_ids_info(unsigned int domain);
 
 

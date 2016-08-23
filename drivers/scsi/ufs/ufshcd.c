@@ -221,7 +221,8 @@ static int ufshcd_send_request_sense(struct ufs_hba *hba, struct scsi_device *sd
 
 extern int fmp_map_sg(struct ufshcd_sg_entry *prd_table, struct scatterlist *sg,
 					uint32_t sector_key, uint32_t idx,
-					uint32_t sector);
+					uint32_t sector, struct bio *bio);
+extern int fmp_encrypted;
 
 #if defined(CONFIG_UFS_FMP_ECRYPT_FS)
 extern void fmp_clear_sg(struct ufshcd_lrb *lrbp);
@@ -1198,9 +1199,21 @@ static int ufshcd_map_sg(struct ufs_hba *hba, struct ufshcd_lrb *lrbp)
 			if (sector_key == UFS_BYPASS_SECTOR_BEGIN) {
 				SET_DAS(&prd_table[i], CLEAR);
 				SET_FAS(&prd_table[i], CLEAR);
+
+				if (cmd->request->part) {
+					if (cmd->request->part->info) {
+						if(!strncmp(cmd->request->part->info->volname, "userdata", sizeof("userdata")) \
+								&& fmp_encrypted \
+								&& (cmd->request->bio->bi_rw & REQ_META))
+							dev_err(hba->dev, "FMP doesn't work even if device is encrypted. direction(%d). sector(%ld). \
+												sensitive_data(%d)\n",
+									cmd->sc_data_direction, cmd->request->bio->bi_iter.bi_sector,
+									cmd->request->bio->bi_sensitive_data);
+					}
+				}
 			} else {
 				unsigned long flags;
-				ret = fmp_map_sg(prd_table, sg, sector_key, i, sector);
+				ret = fmp_map_sg(prd_table, sg, sector_key, i, sector, cmd->request->bio);
 				if (ret) {
 					dev_err(hba->dev, "failed to make fmp descriptor. ret = %d\n", ret);
 					spin_lock_irqsave(hba->host->host_lock, flags);
@@ -2592,9 +2605,13 @@ static int ufshcd_dme_link_startup(struct ufs_hba *hba)
 	uic_cmd.command = UIC_CMD_DME_LINK_STARTUP;
 
 	ret = ufshcd_send_uic_cmd(hba, &uic_cmd);
-	if (ret)
+	if (ret) {
+		hba->debug.flag |= UFSHCD_DEBUG_DUMP;
+		hba->vops->get_debug_info(hba);
+		hba->debug.flag = 0;
 		dev_err(hba->dev,
 			"dme-link-startup: error code %d\n", ret);
+	}
 	return ret;
 }
 
@@ -4741,12 +4758,8 @@ static int ufshcd_reset_and_restore(struct ufs_hba *hba)
 				goto out;
 			}
 
-#if 0	/* check : 1st block_device info */
-			sdev = container_of((&((host)->__devices))->next, struct scsi_device, siblings);
-#else	/* check : all block_device has callback funcs. */
+			dev_err(hba->dev, "%s: UFS reset done and check FS callback.\n", __func__);
 			__shost_for_each_device(sdev, host) {
-#endif
-				dev_info(hba->dev, "%s: scsi device is found : %p.\n", __func__, sdev);
 				sdkp = scsi_disk_get_from_dev(&sdev->sdev_gendev);
 				if (sdkp)
 					gd = sdkp->disk;
@@ -4754,19 +4767,13 @@ static int ufshcd_reset_and_restore(struct ufs_hba *hba)
 					gd = NULL;
 
 				if (gd) {
-					dev_info(hba->dev, "%s: gd is %s(%p).\n", __func__, gd->disk_name, gd);
 					bdev = bdget_disk(gd, 0);
 
-					if (bdev->bd_fscallback_func) {
+					if (bdev->bd_fscallback_func)
 						bdev->bd_fscallback_func(bdev);
-					} else
-						dev_err(hba->dev, "%s no bd_fscallback_func()...\n", gd->disk_name);
 					scsi_disk_put(sdkp);
-				} else
-					dev_err(hba->dev, "%p's gd is null..\n", sdev);
-#if 1	/* check : all block_device has callback funcs. */
+				}
 			}
-#endif
 		}
 	}
 

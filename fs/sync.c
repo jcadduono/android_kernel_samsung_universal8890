@@ -103,6 +103,10 @@ SYSCALL_DEFINE0(sync)
 {
 	int nowait = 0, wait = 1;
 
+#ifndef CONFIG_SAMSUNG_PRODUCT_SHIP
+	printk("sync logger: sync called by %s[%u] (tgid:%u)\n", 
+		current->comm, current->pid,  pid_vnr(task_tgid(current)));
+#endif
 	wakeup_flusher_threads(0, WB_REASON_SYNC);
 	iterate_supers(sync_inodes_one_sb, NULL);
 	iterate_supers(sync_fs_one_sb, &nowait);
@@ -111,6 +115,10 @@ SYSCALL_DEFINE0(sync)
 	iterate_bdevs(fdatawait_one_bdev, NULL);
 	if (unlikely(laptop_mode))
 		laptop_sync_completion();
+#ifndef CONFIG_SAMSUNG_PRODUCT_SHIP
+	printk("sync logger: sync done by %s[%u]\n", 
+		current->comm, current->pid);
+#endif
 	return 0;
 }
 
@@ -156,9 +164,19 @@ SYSCALL_DEFINE1(syncfs, int, fd)
 		return -EBADF;
 	sb = f.file->f_dentry->d_sb;
 
+#ifndef CONFIG_SAMSUNG_PRODUCT_SHIP
+	printk("sync logger: syncfs(%s) called by %s[%u] (tgid:%u)\n",
+		(sb->s_type ? sb->s_type->name : "NULL"),
+		current->comm, current->pid,  pid_vnr(task_tgid(current)));
+#endif
 	down_read(&sb->s_umount);
 	ret = sync_filesystem(sb);
 	up_read(&sb->s_umount);
+#ifndef CONFIG_SAMSUNG_PRODUCT_SHIP
+	printk("sync logger: syncfs(%s) done by %s[%u]\n",
+		(sb->s_type ? sb->s_type->name : "NULL"),
+		current->comm, current->pid);
+#endif
 
 	fdput(f);
 	return ret;

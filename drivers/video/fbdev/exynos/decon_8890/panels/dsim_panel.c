@@ -24,6 +24,8 @@
 #include "mdnie_lite_table_hero1.h"
 #elif defined(CONFIG_PANEL_S6E3HF4_WQHD)
 #include "mdnie_lite_table_hero2.h"
+#elif defined(CONFIG_PANEL_S6E3HA5_WQHD)
+#include "mdnie_lite_table_grace.h"
 #endif
 #endif
 
@@ -109,9 +111,6 @@ static int dsim_panel_probe(struct dsim_device *dsim)
 {
 	int ret = 0;
 	struct panel_private *panel = &dsim->priv;
-#if defined(CONFIG_EXYNOS_DECON_MDNIE_LITE)
-	u16 coordinate[2] = {0, };
-#endif
 
 	dsim->lcd = lcd_device_register("panel", dsim->dev, &dsim->priv, NULL);
 	if (IS_ERR(dsim->lcd)) {
@@ -132,12 +131,12 @@ static int dsim_panel_probe(struct dsim_device *dsim)
 	panel->temperature = NORMAL_TEMPERATURE;
 	panel->acl_enable = 0;
 	panel->current_acl = 0;
-	panel->auto_brightness = 0;
 	panel->siop_enable = 0;
 	panel->current_hbm = 0;
 	panel->current_vint = 0;
-
-	panel->weakness_hbm_comp = 0;
+	panel->adaptive_control = ACL_OPR_MAX - 1;
+	panel->lux = -1;
+	panel->id[0] = panel->id[1] = panel->id[2] = 0xff;
 	dsim->glide_display_size = 0;
 
 	mutex_init(&panel->lock);
@@ -157,10 +156,10 @@ static int dsim_panel_probe(struct dsim_device *dsim)
 #endif
 
 #if defined(CONFIG_EXYNOS_DECON_MDNIE_LITE)
-	coordinate[0] = (u16)panel->coordinate[0];
-	coordinate[1] = (u16)panel->coordinate[1];
-	if (panel->mdnie_support)
-		mdnie_register(&dsim->lcd->dev, dsim, (mdnie_w)mdnie_lite_send_seq, (mdnie_r)mdnie_lite_read, coordinate, &tune_info);
+	if (panel->mdnie_support) {
+		mdnie_register(&dsim->lcd->dev, dsim, (mdnie_w)mdnie_lite_send_seq, (mdnie_r)mdnie_lite_read, panel->coordinate, &tune_info);
+		panel->mdnie_class = get_mdnie_class();
+	}
 #endif
 
 probe_err:
@@ -358,9 +357,36 @@ static int dsim_panel_exitalpm(struct dsim_device *dsim)
 			return ret;
 		}
 	}
+
+	panel->curr_alpm_mode = ALPM_OFF;
 	return ret;
 }
 #endif
+
+#ifdef CONFIG_FB_DSU
+static int dsim_panel_dsu_cmd(struct dsim_device *dsim)
+{
+	int ret = 0;
+	struct panel_private *panel = &dsim->priv;
+
+	dsim_info("%s was called\n", __func__);
+	if (panel->ops->dsu_cmd)
+		ret = panel->ops->dsu_cmd(dsim);
+	return ret;
+}
+
+static int dsim_panel_init(struct dsim_device *dsim)
+{
+	int ret = 0;
+	struct panel_private *panel = &dsim->priv;
+
+	dsim_info("%s was called (DSU)\n", __func__);
+	if (panel->ops->dsu_cmd)
+		ret = panel->ops->init(dsim);
+	return ret;
+}
+#endif
+
 static struct mipi_dsim_lcd_driver mipi_lcd_driver = {
 	.early_probe = dsim_panel_early_probe,
 	.probe		= dsim_panel_probe,
@@ -371,6 +397,10 @@ static struct mipi_dsim_lcd_driver mipi_lcd_driver = {
 #ifdef CONFIG_LCD_DOZE_MODE
 	.enteralpm = dsim_panel_enteralpm,
 	.exitalpm = dsim_panel_exitalpm,
+#endif
+#ifdef CONFIG_FB_DSU
+	.dsu_cmd = dsim_panel_dsu_cmd,
+	.init = dsim_panel_init,
 #endif
 };
 

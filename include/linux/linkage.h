@@ -82,9 +82,9 @@
 #ifdef CONFIG_RKP_CFP_JOPP
 #define ENTRY(name) \
 	.globl name ASM_NL \
+	nop;  \
+	nop;  \
 	ALIGN ASM_NL \
-	nop;  \
-	nop;  \
 	name:
 #else
 #define ENTRY(name) \

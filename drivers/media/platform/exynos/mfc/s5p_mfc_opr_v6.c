@@ -152,8 +152,13 @@ static int s5p_mfc_init_decode(struct s5p_mfc_ctx *ctx)
 	reg = dec->sei_parse;
 	/* Enable realloc interface if SEI is enabled */
 	if (dec->sei_parse && FW_HAS_SEI_S3D_REALLOC(dev))
-		reg |= (0x1 << S5P_FIMV_D_SEI_NEED_INIT_BUFFER_SHIFT);
-	MFC_WRITEL(reg, S5P_FIMV_D_SEI_ENABLE);
+		reg |= (0x1 << S5P_FIMV_D_SEI_ENABLE_NEED_INIT_BUFFER_SHIFT);
+	if (FW_HAS_SEI_INFO_FOR_HDR(dev)) {
+		reg |= (0x1 << S5P_FIMV_D_SEI_ENABLE_CONTENT_LIGHT_SHIFT);
+		reg |= (0x1 << S5P_FIMV_D_SEI_ENABLE_MASTERING_DISPLAY_SHIFT);
+	}
+	MFC_WRITEL(reg, S5P_FIMV_D_SEI_ENABLE);	
+	mfc_debug(2, "SEI available was set, 0x%x\n", MFC_READL(S5P_FIMV_D_SEI_ENABLE));
 
 	MFC_WRITEL(ctx->inst_no, S5P_FIMV_INSTANCE_ID);
 	s5p_mfc_cmd_host2risc(dev, S5P_FIMV_CH_SEQ_HEADER, NULL);

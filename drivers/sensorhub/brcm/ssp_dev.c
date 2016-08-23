@@ -169,6 +169,9 @@ static void initialize_variable(struct ssp_data *data)
 	data->light_device = NULL;
 	data->ges_device = NULL;
 
+#ifdef CONFIG_SENSORS_SSP_LIGHT_COLORID
+	data->hiddenhole_device = NULL;
+#endif
 	data->voice_device = NULL;
 	data->bMcuDumpMode = ssp_check_sec_dump_mode();
 	INIT_LIST_HEAD(&data->pending_list);
@@ -260,6 +263,8 @@ int initialize_mcu(struct ssp_data *data)
 	pr_info("[SSP] MCU Firm Rev : New = %8u\n",
 		data->uCurFirmRev);
 
+
+
 /* hoi: il dan mak a */
 #ifndef CONFIG_SENSORS_SSP_BBD
 	iRet = ssp_send_cmd(data, MSG2SSP_AP_MCU_DUMP_CHECK, 0);
@@ -308,12 +313,6 @@ irqreturn_t ssp_mcu_host_wake_irq_handler(int irq, void *device)
 
 	u64 timestamp = get_current_timestamp();
 	unsigned int tmp = 0U;
-
-	if(data->bIsReset){
-		data->bIsReset = false;
-		pr_info("[SSP_RST] reset enable ignor first irq\n");
-		return IRQ_HANDLED;
-	}
 	
 	/** HIFI Sensor **/
 	/* Use buffer idx from 1 to 999, 0, 1 ... */
@@ -335,10 +334,8 @@ static int ssp_parse_dt(struct device *dev, struct ssp_data *data)
 {
 	struct device_node *np = dev->of_node;
 	int errorno = 0;
-#if defined(CONFIG_SENSORS_SSP_YAS532) || defined(CONFIG_SENSORS_SSP_YAS537)
 	u32 len, temp;
 	int i;
-#endif
 
 	if (!np) {
 		pr_err("[SSP] NO dt node!!\n");
@@ -376,10 +373,16 @@ static int ssp_parse_dt(struct device *dev, struct ssp_data *data)
 		data->acc_type = 0;
 	pr_info("[SSP] acc-type = %d\n", data->acc_type);
 
+	/* mag type */
+	if (of_property_read_u32(np, "ssp-mag-type", &data->mag_type))
+		data->mag_type = 0;
+	pr_info("[SSP] mag-type = %d\n", data->mag_type);
+
 	if (of_property_read_u32(np, "ssp-ap-rev", &data->ap_rev))
 		data->ap_rev = 0;
 
 #if defined(CONFIG_SENSORS_SSP_PROX_AUTOCAL_AMS)
+#ifndef CONFIG_SENSORS_SSP_LIGHT_COLORID
 	if (of_property_read_u32(np, "ssp,prox-hi_thresh",
 			&data->uProxHiThresh))
 		data->uProxHiThresh = DEFUALT_HIGH_THRESHOLD;
@@ -390,6 +393,18 @@ static int ssp_parse_dt(struct device *dev, struct ssp_data *data)
 
 	pr_info("[SSP] hi-thresh[%u] low-thresh[%u]\n",
 		data->uProxHiThresh, data->uProxLoThresh);
+
+	if (of_property_read_u32(np, "ssp,prox-detect_hi_thresh",
+			&data->uProxHiThresh_detect))
+		data->uProxHiThresh_detect = DEFUALT_DETECT_HIGH_THRESHOLD;
+
+	if (of_property_read_u32(np, "ssp,prox-detect_LOW_thresh",
+			&data->uProxLoThresh_detect))
+		data->uProxLoThresh_detect = DEFUALT_DETECT_LOW_THRESHOLD;
+
+	pr_info("[SSP] detect-hi[%u] detect-low[%u]\n",
+		data->uProxHiThresh_detect, data->uProxLoThresh_detect);
+#endif
 #else /* CONFIG_SENSORS_SSP_PROX_FACTORYCAL */
 	if (of_property_read_u32(np, "ssp,prox-hi_thresh",
 			&data->uProxHiThresh_default))
@@ -401,7 +416,6 @@ static int ssp_parse_dt(struct device *dev, struct ssp_data *data)
 
 	pr_info("[SSP] hi-thresh[%u] low-thresh[%u]\n",
 		data->uProxHiThresh_default, data->uProxLoThresh_default);
-#endif
 
 	if (of_property_read_u32(np, "ssp,prox-cal_hi_thresh",
 			&data->uProxHiThresh_cal))
@@ -413,34 +427,46 @@ static int ssp_parse_dt(struct device *dev, struct ssp_data *data)
 
 	pr_info("[SSP] cal-hi[%u] cal-low[%u]\n",
 		data->uProxHiThresh_cal, data->uProxLoThresh_cal);
+#endif
+
+	data->uProxAlertHiThresh = DEFUALT_PROX_ALERT_HIGH_THRESHOLD;
 
 #ifdef CONFIG_SENSORS_MULTIPLE_GLASS_TYPE
 	if (of_property_read_u32(np, "ssp-glass-type", &data->glass_type))
 		data->glass_type = 0;
 #endif
 
-#if defined(CONFIG_SENSORS_SSP_YAS532) || defined(CONFIG_SENSORS_SSP_YAS537)
-	if (!of_get_property(np, "ssp-mag-array", &len)) {
-		pr_info("[SSP] No static matrix at DT for YAS532!(%p)\n",
-				data->static_matrix);
-		goto dt_exit;
+	/* magnetic matrix */
+	if(data->mag_type == 1)
+	{
+		if (of_property_read_u8_array(np, "ssp-mag-array",
+		data->pdc_matrix, sizeof(data->pdc_matrix)))
+		pr_err("no mag-array, set as 0");
 	}
-	if (len/4 != 9) {
-		pr_err("[SSP] Length/4:%d should be 9 for YAS532!\n", len/4);
-		goto dt_exit;
-	}
-	data->static_matrix = kzalloc(9*sizeof(s16), GFP_KERNEL);
-	pr_info("[SSP] static matrix Length:%d, Len/4=%d\n", len, len/4);
-
-	for (i = 0; i < 9; i++) {
-		if (of_property_read_u32_index(np, "ssp-mag-array", i, &temp)) {
-			pr_err("[SSP] %s cannot get u32 of array[%d]!\n",
-				__func__, i);
+	else
+	{
+		if (!of_get_property(np, "ssp-mag-array", &len)) {
+			pr_info("[SSP] No static matrix at DT for YAS532!(%p)\n",
+					data->static_matrix);
 			goto dt_exit;
 		}
-		*(data->static_matrix+i) = (int)temp;
+		if (len/4 != 9) {
+			pr_err("[SSP] Length/4:%d should be 9 for YAS532!\n", len/4);
+			goto dt_exit;
+		}
+		data->static_matrix = kzalloc(9*sizeof(s16), GFP_KERNEL);
+		pr_info("[SSP] static matrix Length:%d, Len/4=%d\n", len, len/4);
+
+		for (i = 0; i < 9; i++) {
+			if (of_property_read_u32_index(np, "ssp-mag-array", i, &temp)) {
+				pr_err("[SSP] %s cannot get u32 of array[%d]!\n",
+					__func__, i);
+				goto dt_exit;
+			}
+			*(data->static_matrix+i) = (int)temp;
+		}
 	}
-#endif
+
 	/* Hall IC threshold */
 	if (of_property_read_u16_array(np, "ssp-hall-threshold",
 		data->hall_threshold, ARRAY_SIZE(data->hall_threshold))) {
@@ -455,10 +481,8 @@ static int ssp_parse_dt(struct device *dev, struct ssp_data *data)
 	return errorno;
 
 dt_exit:
-#if defined(CONFIG_SENSORS_SSP_YAS532) || defined(CONFIG_SENSORS_SSP_YAS537)
 	if (data->static_matrix != NULL)
 		kfree(data->static_matrix);
-#endif
 	return errorno;
 }
 
@@ -492,6 +516,16 @@ static int exynos_cpuidle_muic_notifier(struct notifier_block *nb,
 			__func__, attached_dev, action);
 
 	return NOTIFY_DONE;
+}
+#endif
+
+#if defined (CONFIG_SENSORS_SSP_VLTE)
+static int ssp_hall_ic_notify(struct notifier_block *nb,
+				unsigned long action, void *v)
+{
+	pr_info("[SSP] %s is called : fold state %lu\n", __func__, action);
+	ssp_ckeck_lcd((int) action);
+	return 0;
 }
 #endif
 
@@ -606,7 +640,6 @@ static int ssp_probe(struct spi_device *spi)
 	mutex_init(&data->comm_mutex);
 	mutex_init(&data->pending_mutex);
 	mutex_init(&data->enable_mutex);
-	mutex_init(&data->ssp_enable_mutex);
 
 	if (spi->dev.of_node == NULL) {
 		pr_err("[SSP] %s, function callback is null\n", __func__);
@@ -619,6 +652,9 @@ static int ssp_probe(struct spi_device *spi)
 	initialize_variable(data);
 	wake_lock_init(&data->ssp_wake_lock,
 		WAKE_LOCK_SUSPEND, "ssp_wake_lock");
+
+	wake_lock_init(&data->ssp_comm_wake_lock,
+		WAKE_LOCK_SUSPEND, "ssp_comm_wake_lock");
 
 	iRet = initialize_input_dev(data);
 	if (iRet < 0) {
@@ -701,6 +737,12 @@ static int ssp_probe(struct spi_device *spi)
 		exynos_cpuidle_muic_notifier, MUIC_NOTIFY_DEV_CPUIDLE);
 #endif
 
+#if defined (CONFIG_SENSORS_SSP_VLTE)
+	data->hall_ic_nb.notifier_call = ssp_hall_ic_notify;
+	hall_ic_register_notify(&data->hall_ic_nb);
+#endif
+
+
 	pr_info("[SSP]: %s - probe success!\n", __func__);
 
 	enable_debug_timer(data);
@@ -747,12 +789,12 @@ err_sysfs_create:
 err_create_workqueue:
 	remove_input_dev(data);
 err_input_register_device:
+	wake_lock_destroy(&data->ssp_comm_wake_lock);
 	wake_lock_destroy(&data->ssp_wake_lock);
 err_reset_null:
 	mutex_destroy(&data->comm_mutex);
 	mutex_destroy(&data->pending_mutex);
 	mutex_destroy(&data->enable_mutex);
-	mutex_destroy(&data->ssp_enable_mutex);
 #ifdef CONFIG_SENSORS_SSP_SHTC1
 	mutex_destroy(&data->bulk_temp_read_lock);
 	mutex_destroy(&data->cp_temp_adc_lock);
@@ -782,10 +824,14 @@ static void ssp_shutdown(struct spi_device *spi)
 		pr_err("[SSP]: %s MSG2SSP_AP_STATUS_SHUTDOWN failed\n",
 			__func__);
 	*/
-	mutex_lock(&data->ssp_enable_mutex);
+#if defined (CONFIG_SENSORS_SSP_VLTE)
+	// hall_ic unregister
+	hall_ic_unregister_notify(&data->hall_ic_nb);
+#endif
+
 	ssp_enable(data, false);
 	clean_pending_list(data);
-	mutex_unlock(&data->ssp_enable_mutex);
+
 
 #ifdef CONFIG_HAS_EARLYSUSPEND
 	unregister_early_suspend(&data->early_suspend);
@@ -827,6 +873,7 @@ static void ssp_shutdown(struct spi_device *spi)
 	del_timer_sync(&data->debug_timer);
 	cancel_work_sync(&data->work_debug);
 	destroy_workqueue(data->debug_wq);
+	wake_lock_destroy(&data->ssp_comm_wake_lock);
 	wake_lock_destroy(&data->ssp_wake_lock);
 #ifdef CONFIG_SENSORS_SSP_SHTC1
 	mutex_destroy(&data->bulk_temp_read_lock);
@@ -835,7 +882,6 @@ static void ssp_shutdown(struct spi_device *spi)
 	mutex_destroy(&data->comm_mutex);
 	mutex_destroy(&data->pending_mutex);
 	mutex_destroy(&data->enable_mutex);
-	mutex_destroy(&data->ssp_enable_mutex);
 	pr_info("[SSP] %s done\n", __func__);
 exit:
 	kfree(data);

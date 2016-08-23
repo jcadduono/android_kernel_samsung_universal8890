@@ -1,7 +1,7 @@
 #ifndef FIMC_IS_VENDOR_CONFIG_VJFLTE_H
 #define FIMC_IS_VENDOR_CONFIG_VJFLTE_H
 
-#include "fimc-is-eeprom-rear-3p3_v001.h"
+#include "fimc-is-eeprom-rear-4e6_v004.h"
 
 #define VENDER_PATH
 

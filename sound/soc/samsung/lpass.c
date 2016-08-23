@@ -127,7 +127,7 @@
 
 /* Default interrupt mask */
 #define INTR_CA5_MASK_VAL	(LPASS_INTR_SFR)
-#define INTR_CPU_MASK_VAL	(LPASS_INTR_DMA | LPASS_INTR_I2S | \
+#define INTR_CPU_MASK_VAL	(LPASS_INTR_I2S | \
 				 LPASS_INTR_PCM | LPASS_INTR_SB | \
 				 LPASS_INTR_UART | LPASS_INTR_SFR)
 #define INTR_CPU_DMA_VAL	(LPASS_INTR_DMA)
@@ -232,7 +232,6 @@ bool lpass_i2s_master_mode(void)
 void update_cp_available(bool cpen)
 {
 	cp_available = cpen;
-	pr_info("%s: cp_available = %d\n", __func__, cp_available);
 }
 
 bool is_cp_aud_enabled(void)

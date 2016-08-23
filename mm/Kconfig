@@ -693,3 +693,11 @@ config MAX_STACK_SIZE_MB
 	  changed to a smaller value in which case that is used.
 
 	  A sane initial value is 80 MB.
+
+config MMAP_READAROUND_LIMIT
+	int "Limit mmap readaround upperbound"
+	default 0
+	help
+	  Inappropriate mmap readaround size can hurt device performance
+	  during the sluggish situation. Add the hard upper-limit for
+	  mmap readaround.

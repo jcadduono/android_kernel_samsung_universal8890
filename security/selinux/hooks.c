@@ -85,6 +85,10 @@
 #include <linux/msg.h>
 #include <linux/shm.h>
 
+// [ SEC_SELINUX_PORTING COMMON
+#include <linux/delay.h>
+// ] SEC_SELINUX_PORTING COMMON
+
 #include "avc.h"
 #include "objsec.h"
 #include "netif.h"
@@ -112,9 +116,9 @@ extern void rkp_free_security(unsigned long tsec);
 u8 rkp_ro_page(unsigned long addr);
 static inline unsigned int cmp_sec_integrity(const struct cred *cred,struct mm_struct *mm)
 {
-	return ((cred->bp_task != current) /*|| 
+	return ((cred->bp_task != current) || 
 			(mm && (!( in_interrupt() || in_softirq())) && 
-			(mm->pgd != cred->bp_pgd))*/);
+			(mm->pgd != cred->bp_pgd)));
 			
 }
 extern struct cred init_cred;
@@ -178,7 +182,7 @@ extern struct security_operations *security_ops;
 static atomic_t selinux_secmark_refcount = ATOMIC_INIT(0);
 
 #ifdef CONFIG_SECURITY_SELINUX_DEVELOP
-int selinux_enforcing;
+RKP_RO_AREA int selinux_enforcing;
 
 static int __init enforcing_setup(char *str)
 {
@@ -210,7 +214,7 @@ static int __init selinux_enabled_setup(char *str)
 }
 __setup("selinux=", selinux_enabled_setup);
 #else
-int selinux_enabled = 1;
+RKP_RO_AREA int selinux_enabled = 1;
 #endif
 
 static struct kmem_cache *sel_inode_cache;
@@ -3250,6 +3254,25 @@ static int selinux_inode_permission(struct inode *inode, int mask)
 
 	sid = cred_sid(cred);
 	isec = inode->i_security;
+
+// [ SEC_SELINUX_PORTING COMMON
+	/* skip sid == 1(kernel), it means first boot time */
+	if(isec->initialized != 1 && sid != 1) {
+		int count = 5;
+
+		while(count-- > 0) {
+			printk(KERN_ERR "SELinux : inode->i_security is not initialized. waiting...(%d/5)\n", 5-count); 
+			udelay(500);
+			if(isec->initialized == 1) {
+				printk(KERN_ERR "SELinux : inode->i_security is INITIALIZED.\n"); 
+				break;
+			}
+		}
+		if(isec->initialized != 1) {
+			printk(KERN_ERR "SELinux : inode->i_security is not initialized. not fixed.\n"); 
+		}
+	}
+// ] SEC_SELINUX_PORTING COMMON
 
 	rc = avc_has_perm_noaudit(sid, isec->sid, isec->sclass, perms, 0, &avd);
 	audited = avc_audit_required(perms, &avd, rc,
@@ -6909,7 +6932,7 @@ static int selinux_key_getsecurity(struct key *key, char **_buffer)
 
 #endif
 
-static struct security_operations selinux_ops = {
+RKP_RO_AREA static struct security_operations selinux_ops = {
 	.name =				"selinux",
 
 	.binder_set_context_mgr =	selinux_binder_set_context_mgr,

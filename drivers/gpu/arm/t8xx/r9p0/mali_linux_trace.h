@@ -15,8 +15,6 @@
 
 
 
-
-
 #if !defined(_TRACE_MALI_H) || defined(TRACE_HEADER_MULTI_READ)
 #define _TRACE_MALI_H
 

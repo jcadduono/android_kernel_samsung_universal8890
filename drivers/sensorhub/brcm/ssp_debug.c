@@ -242,9 +242,6 @@ void reset_mcu(struct ssp_data *data)
 	ssp_enable(data, false);
 	clean_pending_list(data);
 	bbd_mcu_reset();
-#ifdef CONFIG_SENSORS_SSP_HIFI_BATCHING
-	ssp_reset_batching_resources(data);
-#endif
 }
 
 void sync_sensor_state(struct ssp_data *data)
@@ -293,6 +290,7 @@ void sync_sensor_state(struct ssp_data *data)
 	}
 
 	set_proximity_threshold(data);
+	set_light_coef(data);
 
 	set_gyro_cal_lib_enable(data, true);
 
@@ -366,6 +364,11 @@ static void print_sensordata(struct ssp_data *data, unsigned int uSensor)
 			data->buf[uSensor].prox[0], data->buf[uSensor].prox[1],
 			get_msdelay(data->adDelayBuf[uSensor]));
 		break;
+	case PROXIMITY_ALERT_SENSOR:
+		ssp_dbg("[SSP] %u : %d, %d (%ums)\n", uSensor,
+			data->buf[uSensor].prox_alert[0], data->buf[uSensor].prox_alert[1],
+			get_msdelay(data->adDelayBuf[uSensor]));
+		break;
 	case STEP_DETECTOR:
 		ssp_dbg("[SSP] %u : %u (%ums, %dms)\n", uSensor,
 			data->buf[uSensor].step_det,
@@ -424,12 +427,13 @@ static void debug_work_func(struct work_struct *work)
 		&& (data->uIrqCnt == 0) && (data->uTimeOutCnt > 0))
 		|| (data->uTimeOutCnt > LIMIT_TIMEOUT_CNT)) {
 
-		mutex_lock(&data->ssp_enable_mutex);
+		if (data->uResetCnt < LIMIT_RESET_CNT) {
 			pr_info("[SSP] : %s - uTimeOutCnt(%u), pending(%u)\n",
 				__func__, data->uTimeOutCnt,
 				!list_empty(&data->pending_list));
 			reset_mcu(data);
-		mutex_unlock(&data->ssp_enable_mutex);
+		} else
+			ssp_enable(data, false);
 
 		data->uTimeOutCnt = 0;
 		data->uComFailCnt = 0;

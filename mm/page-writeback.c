@@ -507,7 +507,7 @@ EXPORT_SYMBOL(bdi_set_max_ratio);
 static unsigned long dirty_freerun_ceiling(unsigned long thresh,
 					   unsigned long bg_thresh)
 {
-	return (thresh + bg_thresh) / 2;
+	return (3 * thresh + bg_thresh) / 4;
 }
 
 static unsigned long hard_dirty_limit(unsigned long thresh)

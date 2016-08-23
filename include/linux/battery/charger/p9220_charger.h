@@ -236,7 +236,8 @@
 #define P9220_VOUT_7V_VAL					0x23
 #define P9220_VOUT_8V_VAL					0x2d
 /* We set VOUT to 10V actually for HERO for RE/CE standard authentication */
-#define P9220_VOUT_9V_VAL					0x41
+#define P9220_VOUT_9V_VAL					0x37
+#define P9220_VOUT_10V_VAL					0x41
 
 #define P9220_FW_RESULT_DOWNLOADING			2
 #define P9220_FW_RESULT_PASS				1
@@ -453,6 +454,7 @@ struct p9220_charger_platform_data {
 	int wpc_cv_call_vout;
 	int wpc_cc_call_vout;
 	int opfq_cnt;
+	u32 hv_vout_wa; /* this is only for Hero/Poseidon */
 };
 
 #define p9220_charger_platform_data_t \

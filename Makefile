@@ -631,8 +631,11 @@ endif
 # Tell gcc to never replace conditional load with a non-conditional one
 KBUILD_CFLAGS	+= $(call cc-option,--param=allow-store-data-races=0)
 
-ifdef CONFIG_RKP_CFP
-CC		= $(PWD)/../../prebuilts/gcc-cfp/linux-x86_64/aarch64-linux-android-4.9/prebuilt/bin/aarch64-linux-android-gcc
+ifdef CONFIG_RKP_CFP_JOPP
+CC		= $(srctree)/tools/prebuilts/gcc-jopp-only/toolchains/linux-x86_64/aarch64-linux-android-4.9/prebuilt/bin/aarch64-linux-android-gcc
+endif
+ifdef CONFIG_RKP_CFP_ROPP
+CC		= $(srctree)/../../prebuilts/gcc-cfp/linux-x86_64/aarch64-linux-android-4.9/prebuilt/bin/aarch64-linux-android-gcc
 endif
 ifdef CONFIG_READABLE_ASM
 # Disable optimizations that make assembler listings hard to read.
@@ -733,9 +736,6 @@ KBUILD_CFLAGS	+= $(call cc-option, -gdwarf-4,)
 endif
 
 ifdef CONFIG_RKP_CFP_JOPP
-# Don't let gcc allocate these registers, they are reserved for use by static binary instrumentation.
-KBUILD_CFLAGS	+= -ffixed-x18
-
 # Don't use jump tables for switch statements, since this generates indirect jump (br) 
 # instructions, which are very dangerous for kernel control flow integrity.
 KBUILD_CFLAGS	+= -fno-jump-tables

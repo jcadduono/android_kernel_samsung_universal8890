@@ -44,7 +44,8 @@ enum exynos_sensor_channel {
 
 enum exynos_sensor_position {
 	SENSOR_POSITION_REAR = 0,
-	SENSOR_POSITION_FRONT
+	SENSOR_POSITION_FRONT = 1,
+	SENSOR_POSITION_SECURE = 2,
 };
 
 enum exynos_sensor_id {
@@ -76,8 +77,6 @@ enum exynos_sensor_id {
 	SENSOR_NAME_S5K2X8		 = 28,
 	SENSOR_NAME_S5K2L1		 = 29,
 	SENSOR_NAME_S5K4EC		 = 57,
-	SENSOR_NAME_SR352		 = 57,
-	SENSOR_NAME_SR030		 = 57,
 
 	SENSOR_NAME_IMX135		 = 101, /* 101 ~ 200 Sony sensors */
 	SENSOR_NAME_IMX134		 = 102,
@@ -95,7 +94,11 @@ enum exynos_sensor_id {
 	SENSOR_NAME_OV5670		 = 204,
 
 	SENSOR_NAME_CUSTOM		 = 301,
-	SENSOR_NAME_VIRTUAL_ZEBU	 = 901,
+	SENSOR_NAME_SR200		 = 302, // SoC Module
+	SENSOR_NAME_SR352		 = 303,
+	SENSOR_NAME_SR130PC20	 = 304,
+	SENSOR_NAME_S5K5E6		 = 305,
+	SENSOR_NAME_VIRTUAL_ZEBU = 901,
 	SENSOR_NAME_END,
 };
 

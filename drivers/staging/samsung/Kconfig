@@ -140,3 +140,15 @@ config CM_OFFSET
 	depends on SEC_PARAM
 	help
 	  set Charging Mode Offset when you enable SEC_PARAM.
+	  
+config SEC_NAD
+	bool "Samsung TN NAD Feature"
+	default n
+	help
+	  Samsung TN NAD Feature, support AT CMD for NAD 2.0
+
+config SEC_DUMP_SUMMARY
+	default n
+	bool "Enable summary dump support" if EMBEDDED
+	help
+	  Samsung Summary dump Feature for debugging use.

@@ -1069,6 +1069,9 @@ static void ecryptfs_set_default_crypt_stat_vals(
 #ifdef CONFIG_SDP
 	crypt_stat->engine_id = -1;
 #endif
+#ifdef CONFIG_DLP
+	memset(&crypt_stat->expiry, 0, sizeof(struct knox_dlp_data));
+#endif
 }
 
 /**

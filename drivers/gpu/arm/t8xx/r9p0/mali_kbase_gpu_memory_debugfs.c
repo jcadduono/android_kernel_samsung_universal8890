@@ -66,6 +66,7 @@ static int kbasep_gpu_memory_seq_show(struct seq_file *sfile, void *data)
  */
 static int kbasep_gpu_memory_debugfs_open(struct inode *in, struct file *file)
 {
+	/* MALI_SEC_INTEGRATION */
 	return single_open(file, gpu_memory_seq_show , NULL);
 }
 

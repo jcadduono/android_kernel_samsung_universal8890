@@ -315,10 +315,10 @@ void sdfat_debug_check_clusters(struct inode *inode){
 		if (tmp_i >= 50)
 			tmp_i = 0;
 
-		BUG_ON(IS_CLUS_EOF(clu.dir));
+		BUG_ON(IS_CLUS_EOF(clu.dir) || IS_CLUS_FREE(clu.dir));
 
-		if (fat_ent_get(inode->i_sb, clu.dir, &(clu.dir)))
-			EMSG("%s: failed to get fat entry\n");
+		if (get_next_clus_safe(inode->i_sb, &(clu.dir)))
+			EMSG("%s: failed to access to FAT\n");
 
 		num_clusters--;
 	}

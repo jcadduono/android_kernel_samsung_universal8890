@@ -41,7 +41,6 @@ extern "C" {
 /* Read-ahead related                                */
 /* First config vars. should be pow of 2             */
 #define FAT_RA_SECTORS	8
-#define DIR_RA_CLUSTER	1
 
 /*----------------------------------------------------------------------*/
 /*  Constant & Macro Definitions                                        */
@@ -141,9 +140,18 @@ typedef struct {
 /* directory structure */
 typedef struct {
 	u32      dir;
-	s32       size;
+	s32      size;
 	u8       flags;
 } CHAIN_T;
+
+/* hint structure */
+typedef struct {
+	u32      clu;
+	union {
+		s32 off;     // cluster offset
+		s32 eidx;    // entry index
+	};
+} HINT_T;
 
 /* file id structure */
 typedef struct {
@@ -154,15 +162,17 @@ typedef struct {
 	u32 start_clu;
 	u64 size;
 	u8  flags;
-	s64 rwoffset;
-	s32 hint_last_off;
-	u32 hint_last_clu;
+	u8  reserved[3];	// padding
+	u32 version;		// the copy of low 32bit of i_version to check the validation of hint_stat
+	s64 rwoffset;		// file offset or dentry index for readdir
+	HINT_T	hint_bmap;	// hint for cluster last accessed
+	HINT_T	hint_stat;	// hint for entry index we try to lookup next time
 } FILE_ID_T;
 
 typedef struct {
 	s8* lfn;
 	s8* sfn;
-	s32 lfnbuf_len; //usally MAX_UNINAME_BUF_SIZE
+	s32 lfnbuf_len;	//usally MAX_UNINAME_BUF_SIZE
 	s32 sfnbuf_len; //usally MAX_DOSNAME_BUF_SIZE, used only for vfat, not for exfat
 } DENTRY_NAMEBUF_T;
 
@@ -211,9 +221,9 @@ typedef struct {
 	s32      (*count_used_clusters)(struct super_block *sb, u32* ret_count);
 	s32      (*init_dir_entry)(struct super_block *sb, CHAIN_T *p_dir, s32 entry, u32 type,u32 start_clu, u64 size);
 	s32      (*init_ext_entry)(struct super_block *sb, CHAIN_T *p_dir, s32 entry, s32 num_entries, UNI_NAME_T *p_uniname, DOS_NAME_T *p_dosname);
-	s32      (*find_dir_entry)(struct super_block *sb, CHAIN_T *p_dir, UNI_NAME_T *p_uniname, s32 num_entries, DOS_NAME_T *p_dosname, u32 type);
+	s32      (*find_dir_entry)(struct super_block *sb, CHAIN_T *p_dir, HINT_T *hint_stat, UNI_NAME_T *p_uniname, s32 num_entries, DOS_NAME_T *p_dosname, u32 type);
 	s32      (*delete_dir_entry)(struct super_block *sb, CHAIN_T *p_dir, s32 entry, s32 offset, s32 num_entries);
-	void     (*get_uni_name_from_ext_entry)(struct super_block *sb, CHAIN_T *p_dir, s32 entry, u16 *uniname);
+	void     (*get_uniname_from_ext_entry)(struct super_block *sb, CHAIN_T *p_dir, s32 entry, u16 *uniname);
 	s32      (*count_ext_entries)(struct super_block *sb, CHAIN_T *p_dir, s32 entry, DENTRY_T *p_entry);
 	s32      (*calc_num_entries)(UNI_NAME_T *p_uniname);
 	u32      (*get_entry_type)(DENTRY_T *p_entry);

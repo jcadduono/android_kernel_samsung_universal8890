@@ -317,6 +317,8 @@ int eax_dma_dai_unregister(void)
 {
 	mutex_destroy(&di.mutex);
 
+	eax_adma_free_buf();
+
 	di.cpu_dai = NULL;
 	di.running = false;
 	di.params_init = false;
@@ -326,8 +328,6 @@ int eax_dma_dai_unregister(void)
 	mi.cpu_dai = NULL;
 	mi.running = false;
 	mi.thread_id = NULL;
-
-	eax_adma_free_buf();
 
 	return 0;
 }

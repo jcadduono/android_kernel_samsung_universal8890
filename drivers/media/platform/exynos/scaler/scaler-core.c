@@ -2650,8 +2650,6 @@ static int sc_run_next_job(struct sc_dev *sc)
 
 	sc_set_prefetch_buffers(sc->dev, ctx);
 
-	mod_timer(&sc->wdt.timer, jiffies + SC_TIMEOUT);
-
 	if (__measure_hw_latency) {
 		if (ctx->context_type == SC_CTX_V4L2_TYPE) {
 			struct vb2_buffer *vb =
@@ -2682,6 +2680,7 @@ static int sc_run_next_job(struct sc_dev *sc)
 	}
 #endif
 	sc_hwset_start(sc);
+	mod_timer(&sc->wdt.timer, jiffies + SC_TIMEOUT);
 
 	return 0;
 }

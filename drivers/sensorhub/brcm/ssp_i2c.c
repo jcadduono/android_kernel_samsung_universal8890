@@ -28,9 +28,6 @@ void clean_msg(struct ssp_msg *msg)
 static int do_transfer(struct ssp_data *data, struct ssp_msg *msg,
 		struct completion *done, int timeout)
 {
-	if (timeout)
-		wake_lock_timeout(&data->ssp_wake_lock, ((timeout/1000)+1)*HZ);
-
 	return bbd_do_transfer(data, msg, done, timeout);
 }
 
@@ -641,10 +638,10 @@ void set_proximity_threshold(struct ssp_data *data)
 	msg->buffer[1] = (char) data->uProxHiThresh;
 	msg->buffer[2] = ((char) (data->uProxLoThresh >> 8) & 0xff);
 	msg->buffer[3] = (char) data->uProxLoThresh;
-	msg->buffer[4] = ((char) (data->uProxHiThresh_cal >> 8) & 0xff);
-	msg->buffer[5] = (char) data->uProxHiThresh_cal;
-	msg->buffer[6] = ((char) (data->uProxLoThresh_cal >> 8) & 0xff);
-	msg->buffer[7] = (char) data->uProxLoThresh_cal;
+	msg->buffer[4] = ((char) (data->uProxHiThresh_detect >> 8) & 0xff);
+	msg->buffer[5] = (char) data->uProxHiThresh_detect;
+	msg->buffer[6] = ((char) (data->uProxLoThresh_detect >> 8) & 0xff);
+	msg->buffer[7] = (char) data->uProxLoThresh_detect;
 #else /* CONFIG_SENSORS_SSP_PROX_FACTORYCAL */
 	msg->cmd = MSG2SSP_AP_SENSOR_PROXTHRESHOLD;
 	msg->length = 4;
@@ -669,11 +666,91 @@ void set_proximity_threshold(struct ssp_data *data)
 #if defined(CONFIG_SENSORS_SSP_PROX_AUTOCAL_AMS)
 	pr_info("[SSP]: Proximity Threshold - %u, %u, %u, %u\n",
 		data->uProxHiThresh, data->uProxLoThresh,
-		data->uProxHiThresh_cal, data->uProxLoThresh_cal);
+		data->uProxHiThresh_detect, data->uProxLoThresh_detect);
 #else
 	pr_info("[SSP]: Proximity Threshold - %u, %u\n",
 		data->uProxHiThresh, data->uProxLoThresh);
 #endif
+}
+
+void set_proximity_alert_threshold(struct ssp_data *data)
+{
+	int iRet = 0;
+
+	struct ssp_msg *msg;
+
+	if (!(data->uSensorState & (1 << PROXIMITY_ALERT_SENSOR))) {
+		pr_info("[SSP]: %s - Skip this function!!!,"\
+			"proximity alert sensor is not connected(0x%llx)\n",
+			__func__, data->uSensorState);
+		return;
+	}
+
+	msg = kzalloc(sizeof(*msg), GFP_KERNEL);
+	if (msg == NULL) {
+		pr_err("[SSP] %s, failed to alloc memory for ssp_msg\n",
+			__func__);
+		return;
+	}
+	msg->cmd = MSG2SSP_AP_SENSOR_PROX_ALERT_THRESHOLD;
+	msg->length = 2;
+	msg->options = AP2HUB_WRITE;
+	msg->buffer = (char *) kzalloc(2, GFP_KERNEL);
+	msg->free_buffer = 1;
+
+	msg->buffer[0] = ((char) (data->uProxAlertHiThresh>> 8) & 0xff);
+	msg->buffer[1] = (char) data->uProxAlertHiThresh;
+
+	iRet = ssp_spi_async(data, msg);
+
+	if (iRet != SUCCESS) {
+		pr_err("[SSP]: %s - SENSOR_PROX_ALERT_THRESHOLD CMD fail %d\n",
+			__func__, iRet);
+		return;
+	}
+
+	pr_info("[SSP]: %s Proximity alert Threshold - %u\n",
+		__func__, data->uProxAlertHiThresh);
+}
+
+void set_light_coef(struct ssp_data *data)
+{
+	int iRet = 0;
+	struct ssp_msg *msg;
+
+	if (!(data->uSensorState & (1 << LIGHT_SENSOR))) {
+		pr_info("[SSP]: %s - Skip this function!!!,"\
+			"light sensor is not connected(0x%llx)\n",
+			__func__, data->uSensorState);
+		return;
+	}
+
+	msg = kzalloc(sizeof(*msg), GFP_KERNEL);
+	if (msg == NULL) {
+		pr_err("[SSP] %s, failed to alloc memory for ssp_msg\n",
+			__func__);
+		return;
+	}
+
+	msg->cmd = MSG2SSP_AP_SET_LIGHT_COEF;
+	msg->length = sizeof(data->light_coef);
+	msg->options = AP2HUB_WRITE;
+	msg->buffer = (char *) kzalloc(sizeof(data->light_coef), GFP_KERNEL);
+	msg->free_buffer = 1;
+
+	memcpy(msg->buffer, data->light_coef, sizeof(data->light_coef));
+
+	iRet = ssp_spi_async(data, msg);
+
+	if (iRet != SUCCESS) {
+		pr_err("[SSP]: %s - MSG2SSP_AP_SET_LIGHT_COEF CMD fail %d\n",
+			__func__, iRet);
+		return;
+	}
+
+	pr_info("[SSP]: %s - %d %d %d %d %d %d %d\n", __func__,
+		data->light_coef[0], data->light_coef[1], data->light_coef[2],
+		data->light_coef[3], data->light_coef[4], data->light_coef[5], data->light_coef[6]);
 }
 
 void set_proximity_barcode_enable(struct ssp_data *data, bool bEnable)
@@ -766,7 +843,6 @@ u64 get_sensor_scanning_info(struct ssp_data *data)
 {
 	int iRet = 0, z = 0;
 	u64 result = 0;
-	char bin[SENSOR_MAX + 1];
 	struct ssp_msg *msg = kzalloc(sizeof(*msg), GFP_KERNEL);
 
 	if (msg == NULL) {
@@ -786,10 +862,10 @@ u64 get_sensor_scanning_info(struct ssp_data *data)
 	if (iRet != SUCCESS)
 		pr_err("[SSP]: %s - i2c fail %d\n", __func__, iRet);
 
-	bin[SENSOR_MAX] = '\0';
+	data->sensor_state[SENSOR_MAX] = '\0';
 	for (z = 0; z < SENSOR_MAX; z++)
-		bin[SENSOR_MAX - 1 - z] = (result & (1 << z)) ? '1' : '0';
-	pr_err("[SSP]: state: %s\n", bin);
+		data->sensor_state[SENSOR_MAX - 1 - z] = (result & (1 << z)) ? '1' : '0';
+	pr_err("[SSP]: state: %s\n", data->sensor_state);
 
 	return result;
 }

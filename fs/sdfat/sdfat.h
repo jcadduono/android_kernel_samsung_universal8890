@@ -59,6 +59,13 @@
 #define ALLOC_COLD_SEQ		4
 
 /*
+ * sdfat nls lossy flag
+ */
+#define NLS_NAME_NO_LOSSY	(0x00) /* no lossy */
+#define NLS_NAME_LOSSY		(0x01) /* just detected incorrect filename(s) */
+#define NLS_NAME_OVERLEN	(0x02) /* the length is over than its limit */
+
+/*
  * sdfat common MACRO
  */
 #define CLUSTER_16(x)	((u16)((x) & 0xFFFFU))

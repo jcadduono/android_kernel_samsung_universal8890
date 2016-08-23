@@ -363,6 +363,7 @@ struct ufs_debug {
 	unsigned long flag;
 #define UFSHCD_DEBUG_LEVEL1	(1 << 0)
 #define UFSHCD_DEBUG_LEVEL2	(1 << 1)
+#define UFSHCD_DEBUG_DUMP	(1 << 2)
 };
 
 /**

@@ -195,8 +195,18 @@ struct fimc_is_fmt fimc_is_formats[] = {
 		.hw_bitwidth	= DMA_OUTPUT_BIT_WIDTH_8BIT,
 		.hw_plane	= 3,
 	}, {
-		.name		= "BAYER 8 bit",
+		.name		= "BAYER 8 bit(GRBG)",
 		.pixelformat	= V4L2_PIX_FMT_SGRBG8,
+		.num_planes	= 1 + SPARE_PLANE,
+		.bitwidth	= 8,
+		.bitsperpixel	= { 8 },
+		.hw_format	= DMA_OUTPUT_FORMAT_BAYER,
+		.hw_order	= DMA_OUTPUT_ORDER_GB_BG,
+		.hw_bitwidth	= DMA_OUTPUT_BIT_WIDTH_8BIT,
+		.hw_plane	= 1,
+	}, {
+		.name		= "BAYER 8 bit(BA81)",
+		.pixelformat	= V4L2_PIX_FMT_SBGGR8,
 		.num_planes	= 1 + SPARE_PLANE,
 		.bitwidth	= 8,
 		.bitsperpixel	= { 8 },
@@ -342,6 +352,11 @@ void fimc_is_set_plane_size(struct fimc_is_frame_cfg *frame, unsigned int sizes[
 		break;
 	case V4L2_PIX_FMT_SGRBG8:
 		dbg("V4L2_PIX_FMT_SGRBG8(w:%d)(h:%d)\n", frame->width, frame->height);
+		sizes[0] = frame->width * frame->height;
+		sizes[1] = SPARE_SIZE;
+		break;
+	case V4L2_PIX_FMT_SBGGR8:
+		dbg("V4L2_PIX_FMT_SBGGR8(w:%d)(h:%d)\n", frame->width, frame->height);
 		sizes[0] = frame->width * frame->height;
 		sizes[1] = SPARE_SIZE;
 		break;
@@ -1128,6 +1143,8 @@ int fimc_is_video_querybuf(struct file *file,
 {
 	int ret = 0;
 	struct fimc_is_queue *queue;
+
+	BUG_ON(!vctx);
 
 	queue = GET_QUEUE(vctx);
 

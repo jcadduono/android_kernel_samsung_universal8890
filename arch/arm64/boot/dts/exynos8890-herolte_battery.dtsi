@@ -70,6 +70,7 @@
 			battery,wpc_cc_cv_vout = <5500>;
 			battery,wpc_cv_call_vout = <5000>;
 			battery,wpc_cc_call_vout = <5000>;
+			battery,hv_vout_wa = <0x41>; /* WC vout 10.0V */
 		};
 	};
 
@@ -276,11 +277,10 @@
 		fuelgauge,repeated_fuelalert;
 		fuelgauge,using_temp_compensation;
 		fuelgauge,low_temp_limit = <100>;
+		fuelgauge,low_temp_recovery = <120>;
 		fuelgauge,using_hw_vempty;
 		fuelgauge,v_empty = <0xA561>; /* Empty: 3260mV, Recover: 3480mV */
 		fuelgauge,v_empty_origin = <0x7D54>; /* Empty: 2500mV, Recover: 3360mV */
-		fuelgauge,sw_v_empty_voltage = <3200>;
-		fuelgauge,sw_v_empty_recover_voltage = <3550>;
 		fuelgauge,qrtable20 = <0x0B00>;
 		fuelgauge,qrtable30 = <0x0A00>;
 		fuelgauge,fg_resistor = <1>;
