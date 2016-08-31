@@ -87,13 +87,20 @@ s32 bdev_check_bdi_valid(struct super_block *sb)
 s32 bdev_readahead(struct super_block *sb, u32 secno, u32 num_secs)
 {
 	FS_INFO_T *fsi = &(SDFAT_SB(sb)->fsi);
-	int i;
+	u32 sects_per_page = (PAGE_SIZE >> sb->s_blocksize_bits);
+	struct blk_plug plug;
+	u32 i;
 
 	if (!fsi->bd_opened) 
 		return -EIO;
 
-	for (i = 0; i < num_secs; i++)
-		__breadahead(sb->s_bdev, secno + i, 1 << sb->s_blocksize_bits);
+	blk_start_plug(&plug);
+	for (i = 0; i < num_secs; i++) {
+		if (i && !(i & (sects_per_page - 1)))
+			blk_flush_plug_list(&plug, false);
+		sb_breadahead(sb, secno + i);
+	}
+	blk_finish_plug(&plug);
 
 	return 0;
 }

@@ -702,6 +702,11 @@ struct sec_battery_platform_data {
 	int mix_high_chg_temp;
 	int mix_high_temp_recovery;
 
+	int wpcbatt_wpc_temp_threshold;
+	int wpcbatt_batt_temp_threshold;
+	int wpcbatt_wpc_temp_recovery;
+	int wpcbatt_batt_temp_recovery;
+
 	/* If these is NOT full check type or NONE full check type,
 	 * it is skipped
 	 */

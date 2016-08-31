@@ -1319,6 +1319,7 @@ static int calc_ttf(struct max77854_fuelgauge_data *fuelgauge, union power_suppl
 		if (charge_current >= cv_data[i].fg_current)
 			break;
 	}
+	i = i >= fuelgauge->cv_data_lenth ? fuelgauge->cv_data_lenth - 1 : i;
 	if (cv_data[i].soc < soc) {
 		for (i = 0; i < fuelgauge->cv_data_lenth; i++) {
 			if (soc <= cv_data[i].soc)

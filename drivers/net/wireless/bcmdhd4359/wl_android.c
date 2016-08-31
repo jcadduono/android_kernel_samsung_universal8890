@@ -24,7 +24,7 @@
  *
  * <<Broadcom-WL-IPTag/Open:>>
  *
- * $Id: wl_android.c 642548 2016-06-09 03:56:14Z $
+ * $Id: wl_android.c 647211 2016-07-04 11:03:52Z $
  */
 
 #include <linux/module.h>
@@ -377,6 +377,10 @@ extern int dhd_bus_mem_dump(dhd_pub_t *dhd);
 extern void dhd_wk_lock_stats_dump(dhd_pub_t *dhdp);
 #endif /* DHD_TRACE_WAKE_LOCK */
 
+#ifdef DHD_DEBUG_UART
+extern bool dhd_debug_uart_is_running(struct net_device *dev);
+#endif
+
 struct io_cfg {
 	s8 *iovar;
 	s32 param;
@@ -498,7 +502,9 @@ int wl_cfg80211_set_p2p_ecsa(struct net_device *net, char* buf, int len)
 int wl_cfg80211_increase_p2p_bw(struct net_device *net, char* buf, int len)
 { return 0; }
 #endif /* WK_CFG80211 */
-
+#ifdef WBTEXT
+static int wl_android_wbtext(struct net_device *dev, char *command, int total_len);
+#endif /* WBTEXT */
 #ifdef WES_SUPPORT
 /* wl_roam.c */
 extern int get_roamscan_mode(struct net_device *dev, int *mode);
@@ -1560,7 +1566,11 @@ wl_android_set_join_prefer(struct net_device *dev, char *command, int total_len)
 	char *pcmd;
 	int total_len_left;
 	int i;
-	char hex[2];
+	char hex[] = "XX";
+#ifdef WBTEXT
+	char commandp[WLC_IOCTL_SMLEN];
+	char clear[] = { 0x01, 0x02, 0x00, 0x00, 0x03, 0x02, 0x00, 0x00, 0x04, 0x02, 0x00, 0x00 };
+#endif /* WBTEXT */
 
 	pcmd = command + strlen(CMD_SETJOINPREFER) + 1;
 	total_len_left = strlen(pcmd);
@@ -1579,12 +1589,27 @@ wl_android_set_join_prefer(struct net_device *dev, char *command, int total_len)
 		buf[i] = (uint8)simple_strtoul(hex, NULL, 16);
 	}
 
+#ifdef WBTEXT
+	/* No coexistance between 11kv and join pref */
+	memset(commandp, 0, sizeof(commandp));
+	if (memcmp(buf, clear, sizeof(buf)) == 0) {
+		snprintf(commandp, WLC_IOCTL_SMLEN, "WBTEXT_ENABLE 1");
+	} else {
+		snprintf(commandp, WLC_IOCTL_SMLEN, "WBTEXT_ENABLE 0");
+	}
+	if ((error = wl_android_wbtext(dev, commandp, WLC_IOCTL_SMLEN)) != BCME_OK) {
+		DHD_ERROR(("Failed to set WBTEXT = %d\n", error));
+		return error;
+	}
+#endif /* WBTEXT */
+
 	prhex("join pref", (uint8 *)buf, JOINPREFFER_BUF_SIZE);
 	error = wldev_iovar_setbuf(dev, "join_pref", buf, JOINPREFFER_BUF_SIZE,
 		smbuf, sizeof(smbuf), NULL);
 	if (error) {
 		DHD_ERROR(("Failed to set join_pref, error = %d\n", error));
 	}
+
 	return error;
 }
 
@@ -1748,7 +1773,7 @@ int wl_android_set_wes_mode(struct net_device *dev, char *command, int total_len
 	int error = 0;
 	int mode = 0;
 #ifdef WBTEXT
-	int policy = WL_BSSTRANS_POLICY_ROAM_ALWAYS;
+	char commandp[WLC_IOCTL_SMLEN];
 #endif /* WBTEXT */
 
 	if (sscanf(command, "%*s %d", &mode) != 1) {
@@ -1764,13 +1789,16 @@ int wl_android_set_wes_mode(struct net_device *dev, char *command, int total_len
 	}
 
 #ifdef WBTEXT
-	if (mode)
-		policy = WL_BSSTRANS_POLICY_PRODUCT;
-
-	error = wldev_iovar_setint(dev, "wnm_bsstrans_resp", policy);
-	if (error) {
-		DHD_ERROR(("%s: Failed to set wbtext error = %d\n",
-			__FUNCTION__, error));
+	/* No coexistance between 11kv and FMC */
+	memset(commandp, 0, sizeof(commandp));
+	if (!mode) {
+		snprintf(commandp, WLC_IOCTL_SMLEN, "WBTEXT_ENABLE 1");
+	} else {
+		snprintf(commandp, WLC_IOCTL_SMLEN, "WBTEXT_ENABLE 0");
+	}
+	if ((error = wl_android_wbtext(dev, commandp, WLC_IOCTL_SMLEN)) != BCME_OK) {
+		DHD_ERROR(("Failed to set WBTEXT = %d\n", error));
+		return error;
 	}
 #endif /* WBTEXT */
 
@@ -2067,9 +2095,6 @@ static int wl_android_wbtext(struct net_device *dev, char *command, int total_le
 	} else {
 		if (data) {
 			data = WL_BSSTRANS_POLICY_PRODUCT;
-			if ((error = wl_cfg80211_wbtext_set_default(dev)) != BCME_OK) {
-				return error;
-			}
 		}
 
 		if ((error = wldev_iovar_setint(dev, "wnm_bsstrans_resp", data)) != BCME_OK) {
@@ -2078,7 +2103,12 @@ static int wl_android_wbtext(struct net_device *dev, char *command, int total_le
 			return error;
 		}
 
-		if (!data) {
+		if (data) {
+			/* reset roam_prof when wbtext is on */
+			if ((error = wl_cfg80211_wbtext_set_default(dev)) != BCME_OK) {
+				return error;
+			}
+		} else {
 			/* reset legacy roam trigger when wbtext is off */
 			roam_trigger[0] = DEFAULT_ROAM_TRIGGER_VALUE;
 			roam_trigger[1] = WLC_BAND_ALL;
@@ -2609,6 +2639,13 @@ int wl_android_wifi_off(struct net_device *dev, bool on_failure)
 		return -EINVAL;
 	}
 
+#if defined(BCMPCIE) && defined(DHD_DEBUG_UART)
+	ret = dhd_debug_uart_is_running(dev);
+	if (ret) {
+		DHD_ERROR(("%s - Debug UART App is running\n", __FUNCTION__));
+		return -EBUSY;
+	}
+#endif	/* BCMPCIE && DHD_DEBUG_UART */
 	dhd_net_if_lock(dev);
 	if (g_wifi_on || on_failure) {
 #if defined(BCMSDIO) || defined(BCMPCIE)

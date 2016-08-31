@@ -869,6 +869,7 @@ struct ssp_data {
 	struct mutex comm_mutex;
 	struct mutex pending_mutex;
 	struct mutex enable_mutex;
+	struct mutex ssp_enable_mutex; 
 
 	s16 *static_matrix;
 	struct list_head pending_list;

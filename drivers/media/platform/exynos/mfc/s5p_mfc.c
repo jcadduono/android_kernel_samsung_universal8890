@@ -74,12 +74,6 @@ static struct proc_dir_entry *mfc_proc_entry;
 #define MFC_PROC_INSTANCE_NUMBER	"instance_number"
 #define MFC_PROC_DRM_INSTANCE_NUMBER	"drm_instance_number"
 #define MFC_PROC_FW_STATUS		"fw_status"
-
-#define MFC_DRM_MAGIC_SIZE	0x10
-#define MFC_DRM_MAGIC_CHUNK0	0x13cdbf16
-#define MFC_DRM_MAGIC_CHUNK1	0x8b803342
-#define MFC_DRM_MAGIC_CHUNK2	0x5e87f4f5
-#define MFC_DRM_MAGIC_CHUNK3	0x3bd05317
 #endif
 
 #define MFC_SFR_AREA_COUNT	19
@@ -770,7 +764,7 @@ static void s5p_mfc_handle_frame_new(struct s5p_mfc_ctx *ctx, unsigned int err)
 	list_for_each_entry(dst_buf, dst_queue_addr, list) {
 		mfc_debug(2, "Listing: %d\n", dst_buf->vb.v4l2_buf.index);
 		/* Check if this is the buffer we're looking for */
-		mfc_debug(2, "0x%08llx, 0x%08llx",
+		mfc_debug(2, "0x%08llx, 0x%08llx\n",
 			(unsigned long long)s5p_mfc_mem_plane_addr(ctx,
 			&dst_buf->vb, 0),(unsigned long long)dspl_y_addr);
 		if (s5p_mfc_mem_plane_addr(ctx, &dst_buf->vb, 0)
@@ -1259,8 +1253,8 @@ static void s5p_mfc_handle_frame(struct s5p_mfc_ctx *ctx,
 		remained = (unsigned int)(src_buf->vb.v4l2_planes[0].bytesused - dec->consumed);
 
 
-		if ((prev_offset == 0) && (remained > STUFF_BYTE)) {
-
+		if ((prev_offset == 0) && (remained > STUFF_BYTE) && (err == 0) &&
+				(src_buf->vb.v4l2_planes[0].bytesused > dec->consumed)){ 
 			/* Run MFC again on the same buffer */
 			mfc_debug(2, "Running again the same buffer.\n");
 
@@ -1932,6 +1926,7 @@ static int s5p_mfc_open(struct file *file)
 		ret = exynos_smc(SMC_DCPP_SUPPORT, 0, 0, 0);
 		if (ret != DRMDRV_OK) {
 			dev->is_support_smc = 0;
+			mfc_err_ctx("Does not support DCPP(%#x)\n", ret);
 		} else {
 			dev->is_support_smc = 1;
 			if (!dev->drm_fw_info.ofs) {
@@ -2027,15 +2022,16 @@ err_pwr_enable:
 err_fw_load:
 #ifdef CONFIG_EXYNOS_CONTENT_PATH_PROTECTION
 	if (dev->drm_fw_status) {
+		int smc_ret = 0;
 		dev->is_support_smc = 0;
 		dev->drm_fw_status = 0;
 		if (IS_MFCv10X(dev)) {
-			ret = exynos_smc(SMC_DRM_SECBUF_UNPROT,
+			smc_ret = exynos_smc(SMC_DRM_SECBUF_UNPROT,
 					dev->drm_fw_info.phys,
 					dev->fw_region_size,
 					ION_EXYNOS_HEAP_ID_VIDEO_FW);
-			if (ret != DRMDRV_OK)
-				mfc_err_ctx("failed MFC DRM F/W unprot(%#x)\n", ret);
+			if (smc_ret != DRMDRV_OK)
+				mfc_err_ctx("failed MFC DRM F/W unprot(%#x)\n", smc_ret);
 		}
 	}
 #endif
@@ -2167,6 +2163,7 @@ static int s5p_mfc_release(struct file *file)
 			goto err_release;
 		}
 
+		s5p_mfc_clean_ctx_int_flags(ctx);
 		s5p_mfc_change_state(ctx, MFCINST_RETURN_INST);
 		spin_lock_irq(&dev->condlock);
 		set_bit(ctx->num, &dev->ctx_work_bits);

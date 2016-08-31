@@ -403,7 +403,8 @@ asmlinkage void __exception do_undefinstr(struct pt_regs *regs)
 	info.si_addr  = pc;
 
 #ifdef CONFIG_SEC_DEBUG
-	sec_debug_store_fault_addr(-1, regs);
+	if (!user_mode(regs))
+		sec_debug_store_fault_addr(-1, regs);
 #endif
 
 	arm64_notify_die("Oops - undefined instruction", regs, &info, 0);

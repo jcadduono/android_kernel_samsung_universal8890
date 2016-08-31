@@ -45,9 +45,6 @@ void s2mm005_rprd_mode_change(struct s2mm005_data *usbpd_data, u8 mode);
 void s2mm005_manual_JIGON(struct s2mm005_data *usbpd_data, int mode);
 void s2mm005_manual_LPM(struct s2mm005_data *usbpd_data, int cmd);
 void s2mm005_control_option_command(struct s2mm005_data *usbpd_data, int cmd);
-#ifdef CONFIG_WATER_CHECK
-int check_water_state(void);
-#endif
 ////////////////////////////////////////////////////////////////////////////////
 //status machine of s2mm005 ccic
 ////////////////////////////////////////////////////////////////////////////////
@@ -471,66 +468,6 @@ void s2mm005_control_option_command(struct s2mm005_data *usbpd_data, int cmd)
         W_DATA[1] = 0x80 | (cmd&0xF);
         s2mm005_write_byte(i2c, REG_ADD, &W_DATA[0], 2);
 }
-
-#ifdef CONFIG_WATER_CHECK
-int check_water_state(void)
-{
-	struct s2mm005_data *usbpd_data;// = dev_get_drvdata(ccic_device);
-	struct i2c_client *i2c;// = usbpd_data->i2c;
-	uint8_t R_DATA[4];
-	uint32_t R_len;
-	uint16_t REG_ADD;
-	int i;
-
-	if (!ccic_device) {
-		pr_info("%s, ccic is not ready\n",__func__);
-		return 0;
-	}
-
-	usbpd_data = dev_get_drvdata(ccic_device);
-	if (!usbpd_data) {
-		pr_info("%s, pd data is not ready\n",__func__);
-		return 0;
-	}
-	i2c = usbpd_data->i2c;
-
-	if ((usbpd_data->firm_ver[2] >= 0x15 && usbpd_data->firm_ver[2] <= 0x18) ||
-		(usbpd_data->firm_ver[2] == 0x1D) ||
-		(usbpd_data->firm_ver[2] >= 0x1E && usbpd_data->hw_rev >= 9)) {
-
-		/* for Wake up*/
-		for(i=0; i<5; i++){
-			R_DATA[0] = 0x00;
-			REG_ADD = 0x8;
-			s2mm005_read_byte(i2c, REG_ADD, R_DATA, 1);   //dummy read
-		}
-		udelay(10);
-
-		R_DATA[0] = 0x00;
-		R_DATA[1] = 0x00;
-		R_DATA[2] = 0x00;
-		R_DATA[3] = 0x00;
-		REG_ADD = 0x60;
-		R_len = 4;
-		s2mm005_read_byte(i2c, REG_ADD, R_DATA, R_len);
-
-		usbpd_data->water_det = R_DATA[0] & (0x1 << 3);
-		dev_info(&i2c->dev, "%s: WATER: reg:0x%02X WATER=%d\n", __func__, R_DATA[0], usbpd_data->water_det);
-
-		if (usbpd_data->water_det) {
-			dev_info(&i2c->dev, "== WATER DETECT ==\n");
-			if (usbpd_data->firm_ver[2] >= 0x18){
-				s2mm005_manual_LPM(usbpd_data, 0x9);
-			} else {
-				s2mm005_manual_LPM(usbpd_data, 0x1);
-			}
-			return 1;
-		}
-	}
-
-	return 0;
-}
-#endif
 
 static void s2mm005_new_toggling_control(struct s2mm005_data *usbpd_data, u8 mode)
 {

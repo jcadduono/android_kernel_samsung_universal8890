@@ -1485,11 +1485,7 @@ static int vfsspi_parse_dt(struct device *dev,
 			data->retain_pin = gpio;
 			pr_info("%s: retainPin=%d\n", __func__, data->retain_pin);
 			gpio_request(data->retain_pin, "vfsspi_retain");
-#ifndef ENABLE_SENSORS_FPRINT_SECURE
 			data->detect_mode = DETECT_ADM;
-#else
-			data->detect_mode = DETECT_NORMAL;
-#endif
 		}
 	}
 	if (of_property_read_u32(np, "vfsspi-ldocontrol",
@@ -2121,7 +2117,7 @@ static int vfsspi_pm_suspend(struct device *dev)
 	pr_info("%s\n", __func__);
 	if (g_data != NULL) {
 		vfsspi_disable_debug_timer();
-		if (0) {
+		if (g_data->retain_pin) {
 			if ((g_data->ldo_onoff) && (atomic_read(&g_data->irq_enabled) == DRDY_IRQ_ENABLE)) {
 				g_data->retain_onoff = 1;
 #ifdef ENABLE_SENSORS_FPRINT_SECURE
@@ -2134,6 +2130,7 @@ static int vfsspi_pm_suspend(struct device *dev)
 				g_data->retain_onoff = 0;
 				vfsspi_ioctl_power_off(g_data);
 #ifdef ENABLE_SENSORS_FPRINT_SECURE
+				vfsspi_goto_suspend = 1; /* used by pinctrl_samsung.c */
 				pr_info("%s: suspend smc ret=%d\n", __func__,
 					exynos_smc(MC_FC_FP_PM_SUSPEND, 0, 0, 0));
 #endif
@@ -2155,7 +2152,7 @@ static int vfsspi_pm_resume(struct device *dev)
 {
 	pr_info("%s\n", __func__);
 	if (g_data != NULL) {
-		if (0) {
+		if (g_data->retain_pin) {
 #ifdef ENABLE_SENSORS_FPRINT_SECURE
 			if (vfsspi_goto_suspend) {
 				vfsspi_goto_suspend = 0;

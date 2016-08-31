@@ -266,6 +266,11 @@ static void muic_handle_attach(muic_data_t *pmuic,
                 if (pmuic->pdata->afc_disable)
                         pr_info("%s:%s AFC Disable(%d) by USER!\n", MUIC_DEV_NAME,
                                 __func__, pmuic->pdata->afc_disable);
+#if defined(CONFIG_MUIC_SUPPORT_CCIC)
+		else if (pmuic->afc_water_disable)
+                        pr_info("%s:%s AFC Disable(%d) by WATER!\n", MUIC_DEV_NAME,
+                                __func__, pmuic->afc_water_disable);
+#endif
                 else {
                         if ((pmuic->phv->is_afc_muic_ready == false) &&
 				vps_is_hv_ta(&pmuic->vps)) {

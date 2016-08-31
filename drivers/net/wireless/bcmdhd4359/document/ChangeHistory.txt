@@ -1,4 +1,77 @@
-BCM4359 DHD 1.363.59.181 for Android Zen/Noble/Hero/Grace Project
+BCM4359 DHD 1.363.59.193 for Android Zen/Noble/Hero/Grace Project
+
+DHD 1.363.59.193 - 2016.07.05
+Others
+ - Disable 11kv feature when join preference was enabled
+
+
+DHD 1.363.59.191 - 2016.07.05
+Others
+ - CSP:1062325 Block turn off during debug uart app running
+ - CSP:1067131 To prevent improper L2 switching, deliver only the STAs info
+ - Fixed compile error for WRITE_MACADDR  feature
+
+
+DHD 1.363.59.190 - 2016.06.28
+Kernel Panic
+ - CSP:1066646 Fixed kernel panic due to not deleted tcpack suppress timer
+
+Others
+ - CSP:1066881 Fixed wrong set for WBTEXT mode after enable WES
+
+
+DHD 1.363.59.189 - 2016.06.28
+New Feature
+ - CSP:1008832 Supported dynamic MU-MIMO configuration - Send roam events to wpa_supplicant for reset its EAPOL replay counter
+   (Default Disabled - DYNAMIC_MUMIMO_CONTROL)
+
+Others
+ - CSP:1058367 Added Rx Multicast filter for unicast address in suspend
+   (Default Disabled - ENABLE_IPMCAST_FILTER)
+ - CSP:1063113 Fixed kernel stack overflow issue due to sscanf
+ - CSP:1065839 Fixed HANG event blocking issue when the dongle trap is triggered
+ - Added PCI configuration patch for module type dhd on Exynos platform
+ - Enhanced random mac address scan restore mechanism
+ - Fixed event log file saving location
+ - Fixed wl_event_handler thread is not terminated issue for module type
+
+
+DHD 1.363.59.186 - 2016.06.21
+Kernel Panic
+ - CSP:1061564 Prevent kernel panic due to invalid memory access when called dhd_set_mcast_list_handler()
+ - CSP:1062516 Prevent invalid address access due to PCIe Linkdown
+
+Others
+ - CSP:1062658 Added validation check routines for SoftAP channel on STA/SoftAP concurrent mode
+ - CSP:1062950 Removed dhd_os_sdlock/unlock due to Audio noise issue during WiFi on
+ - Added default WBTEXT configurations
+ - Fixed the possible bugs of parsing the CIS information
+ - Free the BRCM ether type data packets which is not in preallocated packet pool
+ - Limited roam profile reset for STA only mode
+
+
+DHD 1.363.59.185 - 2016-06-14
+New Feature
+ - Dynamically configurable of the MU-MIMO capability with murx_bfe_cap IOVAR
+
+Kernel Panic
+ - CSP:1059450 Fixed system lock up due to repetitive call_usermodehelper
+
+Others
+ - CSP:1050009 Added missing cpu callback event due to fixation of CPU 0 occupation issue
+ - CSP:1059271 Added GON response retry frame when GON confirm frame was missed
+ - CSP:1059462 Changed cfgvendor feature set as disable value
+ - Added channel information log for roaming done
+ - Added more debug logs for resumed on timeout issue debugging
+ - Changed Random mac feature control method
+   (It should be sync up with F/W 9.87.38 or higher version)
+ - Reset roam profile to default value for 11kv
+
+
+DHD 1.363.59.181.1 - 2016.06.07
+Others
+ - CSP:1050009 Fixed CPU 0 occupation issue after system suspend
+
 
 DHD 1.363.59.181 - 2016.05.31
 Kernel Panic

@@ -19,7 +19,7 @@ enum state {
 extern int felica_ant_tuning(int parameter);
 #endif
 
-#if defined(CONFIG_SENSORS_HALL_FOLDER)
+#if defined(CONFIG_SENSORS_HALL_FOLDER) || defined(CONFIG_V_HALL_FOLDING)
 void hall_ic_register_notify(struct notifier_block *nb);
 #if !defined(CONFIG_SENSORS_HALL_FOLDER)
 void hall_ic_unregister_notify(struct notifier_block *nb);

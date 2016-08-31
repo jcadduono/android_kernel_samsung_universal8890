@@ -3377,6 +3377,7 @@ static int sd_probe(struct device *dev)
 
 	if (!sdp->host->by_ufs) {
 		sdp->request_queue->backing_dev_info.max_ratio = 10;
+		sdp->request_queue->backing_dev_info.min_ratio = 10;
 		sdp->request_queue->backing_dev_info.capabilities |= BDI_CAP_STRICTLIMIT;
 	}
 

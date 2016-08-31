@@ -618,6 +618,7 @@ static void otg_notify_state(struct otg_notify *n,
 	pr_info("%s+ event=%s(%lu), enable=%s\n", __func__,
 		event_string(event), event, enable == 0 ? "off" : "on");
 
+	prev_c_type = u_notify->c_type;
 	virtual = IS_VIRTUAL(event);
 	event = PHY_EVENT(event);
 
@@ -712,7 +713,7 @@ static void otg_notify_state(struct otg_notify *n,
 		}
 		u_notify->diable_v_drive = 0;
 		if (enable) {
-			if (check_same_event_type(prev_c_type, event)) {
+			if (check_same_event_type(prev_c_type, event) && !virtual) {
 				pr_err("now host mode, skip this command\n");
 				goto err;
 			}

@@ -1512,6 +1512,55 @@ static int dwc3_gadget_set_selfpowered(struct usb_gadget *g,
 	return 0;
 }
 
+static int dwc3_gadget_trb_buffer_check(struct dwc3 *dwc)
+{
+	if (!dwc->ctrl_req) {
+		dev_err(dwc->dev, "dwc->ctrl_req is NULL\n");
+		return -EINVAL;
+	} else {
+		dev_info(dwc->dev, "dwc->ctrl: %p\n", dwc->ctrl_req);
+	}
+
+	if (!dwc->ctrl_req_addr) {
+		dev_err(dwc->dev, "dwc->ctrl_req_addr is NULL\n");
+		return -EINVAL;
+	} else {
+		dev_info(dwc->dev, "dwc->ctrl_addr: %08llx\n",
+				(unsigned long long)dwc->ctrl_req_addr);
+	}
+
+	if (!dwc->ep0_trb) {
+		dev_err(dwc->dev, "dwc->ep0_trb is NULL\n");
+		return -EINVAL;
+	} else {
+		dev_info(dwc->dev, "dwc->ep0_trb: %p\n", dwc->ep0_trb);
+	}
+
+	if (!dwc->ep0_trb_addr) {
+		dev_err(dwc->dev, "dwc->ep0_trb_addr is NULL\n");
+		return -EINVAL;
+	} else {
+		dev_info(dwc->dev, "dwc->ep0_trb_addr: %08llx\n",
+				(unsigned long long)dwc->ep0_trb_addr);
+	}
+
+	if (!dwc->setup_buf) {
+		dev_err(dwc->dev, "dwc->setup_buf is NULL\n");
+		return -EINVAL;
+	} else {
+		dev_info(dwc->dev, "dwc->setup_buf: %p\n", dwc->setup_buf);
+	}
+
+	if (!dwc->ep0_bounce) {
+		dev_err(dwc->dev, "dwc->ep0_bounce is NULL\n");
+		return -EINVAL;
+	} else {
+		dev_info(dwc->dev, "dwc->ep0_bounce : %p\n", dwc->ep0_bounce);
+	}
+
+	return 0;
+}
+
 static int dwc3_udc_init(struct dwc3 *dwc)
 {
 	struct dwc3_ep          *dep;
@@ -1559,6 +1608,10 @@ static int dwc3_udc_init(struct dwc3 *dwc)
 
 	/* Start with SuperSpeed Default */
 	dwc3_gadget_ep0_desc.wMaxPacketSize = cpu_to_le16(512);
+
+	ret = dwc3_gadget_trb_buffer_check(dwc);
+	if (ret)
+		goto err0;
 
 	dep = dwc->eps[0];
 	ret = __dwc3_gadget_ep_enable(dep, &dwc3_gadget_ep0_desc, NULL, false,

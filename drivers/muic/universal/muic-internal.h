@@ -205,6 +205,7 @@ typedef struct _muic_data_t {
 
 	/* Operation Mode */
 	enum muic_op_mode	opmode;
+	bool 			afc_water_disable;
 #endif
 }muic_data_t;
 

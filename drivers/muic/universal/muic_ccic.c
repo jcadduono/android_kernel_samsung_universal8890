@@ -42,6 +42,7 @@
 #include "muic_apis.h"
 #include "muic_debug.h"
 #include "muic_regmap.h"
+#include "muic_state.h"
 
 #if defined(CONFIG_MUIC_SUPPORT_CCIC)
 #include <linux/ccic/ccic_notifier.h>
@@ -282,6 +283,11 @@ int mdev_continue_for_TA_USB(muic_data_t *pmuic, int mdev)
 			mdev_handle_ccic_detach(pmuic);
 			return 0;
 		}
+		if (pdesc->ccic_evt_rprd && vbus) {
+			pr_info("%s:%s:RPRD detected. set path to USB\n",
+					__func__, MUIC_DEV_NAME);
+			mdev_com_to(pmuic, MUIC_PATH_USB_AP);
+		}
 		if (pdesc->ccic_evt_rid == 0) {
 			pr_info("%s:%s: No rid\n", __func__, MUIC_DEV_NAME);
 			return 0;
@@ -479,6 +485,12 @@ static int muic_handle_ccic_ATTACH(muic_data_t *pmuic, CC_NOTI_ATTACH_TYPEDEF *p
 		else
 			pr_info("%s: No VBUS-> doing nothing.\n", __func__);
 
+		/* CCIC ATTACH means NO WATER */
+		if (pmuic->afc_water_disable) {
+			pr_info("%s: Water is not detected, AFC Enable\n", __func__);
+			pmuic->afc_water_disable = false;
+		}
+
 		/* W/A for Incomplete insertion case */
 		pdesc->ccic_evt_dcdcnt = 0;
 		if (prev_status != MUIC_CCIC_NOTI_ATTACH &&
@@ -613,6 +625,21 @@ static int muic_handle_ccic_RID(muic_data_t *pmuic, CC_NOTI_RID_TYPEDEF *pnoti)
 	return 0;
 }
 
+static int muic_handle_ccic_WATER(muic_data_t *pmuic, CC_NOTI_ATTACH_TYPEDEF *pnoti)
+{
+	pr_info("%s: src:%d dest:%d id:%d attach:%d cable_type:%d rprd:%d\n", __func__,
+		pnoti->src, pnoti->dest, pnoti->id, pnoti->attach, pnoti->cable_type, pnoti->rprd);
+
+	if (pnoti->attach == CCIC_NOTIFY_ATTACH) {
+		pr_info("%s: Water detect\n", __func__);
+		pmuic->afc_water_disable = true;
+	} else {
+		pr_info("%s: Undefined notification, Discard\n", __func__);
+	}
+
+	return 0;
+}
+
 static int muic_handle_ccic_notification(struct notifier_block *nb,
 				unsigned long action, void *data)
 {
@@ -646,6 +673,10 @@ static int muic_handle_ccic_notification(struct notifier_block *nb,
 	case CCIC_NOTIFY_ID_RID:
 		pr_info("%s: CCIC_NOTIFY_ID_RID\n", __func__);
 		muic_handle_ccic_RID(pmuic, (CC_NOTI_RID_TYPEDEF *)pnoti);
+		break;
+	case CCIC_NOTIFY_ID_WATER:
+		pr_info("%s: CCIC_NOTIFY_ID_WATER\n", __func__);
+		muic_handle_ccic_WATER(pmuic, (CC_NOTI_ATTACH_TYPEDEF *)pnoti);
 		break;
 	default:
 		pr_info("%s: Undefined Noti. ID\n", __func__);

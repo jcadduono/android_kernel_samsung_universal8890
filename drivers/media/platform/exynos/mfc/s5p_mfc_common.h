@@ -176,6 +176,8 @@
 					(dev->fw.date >= 0x151223))
 #define FW_HAS_SEI_INFO_FOR_HDR(dev)	(IS_MFCv10X(dev) &&		\
 					(dev->fw.date >= 0x160415))
+#define FW_HAS_FIXED_SLICE(dev)		(IS_MFCv10X(dev) &&		\
+					(dev->fw.date >= 0x160202))
 
 #define HW_LOCK_CLEAR_MASK		(0xFFFFFFFF)
 
@@ -223,6 +225,7 @@
 #define	ENC_SET_SKYPE_FLAG		(1 << 3)
 #define	ENC_SET_ROI_CONTROL		(1 << 4)
 #define	ENC_SET_QP_BOUND_PB		(1 << 5)
+#define	ENC_SET_FIXED_SLICE		(1 << 6)
 
 #define MFC_QOS_FLAG_NODATA		0xFFFFFFFF
 

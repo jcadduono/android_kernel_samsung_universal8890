@@ -296,6 +296,7 @@ int mmc_init_queue(struct mmc_queue *mq, struct mmc_card *card,
 		/* apply more throttle on external sdcard */
 		/* XXX it's only for devices with large dirty_threshold */
 		mq->queue->backing_dev_info.max_ratio = 10;
+		mq->queue->backing_dev_info.min_ratio = 10;
 		mq->queue->backing_dev_info.capabilities |= BDI_CAP_STRICTLIMIT;
 	}
 

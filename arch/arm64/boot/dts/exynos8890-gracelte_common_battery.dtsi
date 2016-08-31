@@ -185,6 +185,11 @@
 		battery,wpc_lcd_on_high_temp_rec = <300>;
 		battery,wpc_hv_lcd_on_input_limit_current = <400>;
 
+		battery,wpcbatt_wpc_temp_threshold = <550>;
+		battery,wpcbatt_batt_temp_threshold = <450>;
+		battery,wpcbatt_wpc_temp_recovery = <500>;
+		battery,wpcbatt_batt_temp_recovery = <400>;
+
 		battery,sleep_mode_limit_current = <500>;
 		battery,wc_full_input_limit_current = <100>;
 		battery,wc_heating_input_limit_current = <400>;

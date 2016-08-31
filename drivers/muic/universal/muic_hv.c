@@ -2320,6 +2320,11 @@ static irqreturn_t max77854_muic_hv_irq(int irq, void *data)
 	else if (phv->afc_disable)
 		pr_info("%s:%s AFC disable by USER (afc_disable[%c]\n", MUIC_HV_DEV_NAME,
 			__func__, (phv->afc_disable ? 'T' : 'F'));
+#if defined(CONFIG_MUIC_SUPPORT_CCIC)
+	else if (phv->pmuic->afc_water_disable)
+		pr_info("%s:%s AFC disable by WATER (afc_water_disable[%c]\n", MUIC_HV_DEV_NAME,
+			__func__, (phv->pmuic->afc_water_disable ? 'T' : 'F'));
+#endif
 	else
 		max77854_hv_muic_detect_dev(phv, irq);
 

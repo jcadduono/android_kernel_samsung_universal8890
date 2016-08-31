@@ -640,6 +640,7 @@ static int ssp_probe(struct spi_device *spi)
 	mutex_init(&data->comm_mutex);
 	mutex_init(&data->pending_mutex);
 	mutex_init(&data->enable_mutex);
+	mutex_init(&data->ssp_enable_mutex);
 
 	if (spi->dev.of_node == NULL) {
 		pr_err("[SSP] %s, function callback is null\n", __func__);
@@ -795,6 +796,7 @@ err_reset_null:
 	mutex_destroy(&data->comm_mutex);
 	mutex_destroy(&data->pending_mutex);
 	mutex_destroy(&data->enable_mutex);
+	mutex_destroy(&data->ssp_enable_mutex);
 #ifdef CONFIG_SENSORS_SSP_SHTC1
 	mutex_destroy(&data->bulk_temp_read_lock);
 	mutex_destroy(&data->cp_temp_adc_lock);
@@ -828,10 +830,10 @@ static void ssp_shutdown(struct spi_device *spi)
 	// hall_ic unregister
 	hall_ic_unregister_notify(&data->hall_ic_nb);
 #endif
-
+	mutex_lock(&data->ssp_enable_mutex);
 	ssp_enable(data, false);
 	clean_pending_list(data);
-
+	mutex_unlock(&data->ssp_enable_mutex);
 
 #ifdef CONFIG_HAS_EARLYSUSPEND
 	unregister_early_suspend(&data->early_suspend);
@@ -882,6 +884,7 @@ static void ssp_shutdown(struct spi_device *spi)
 	mutex_destroy(&data->comm_mutex);
 	mutex_destroy(&data->pending_mutex);
 	mutex_destroy(&data->enable_mutex);
+	mutex_destroy(&data->ssp_enable_mutex);
 	pr_info("[SSP] %s done\n", __func__);
 exit:
 	kfree(data);

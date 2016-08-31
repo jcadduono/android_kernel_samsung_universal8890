@@ -45,9 +45,6 @@ extern void s2mm005_rprd_mode_change(struct s2mm005_data *usbpd_data, u8 mode);
 extern void s2mm005_manual_JIGON(struct s2mm005_data *usbpd_data, int mode);
 extern void s2mm005_manual_LPM(struct s2mm005_data *usbpd_data, int cmd);
 extern void s2mm005_control_option_command(struct s2mm005_data *usbpd_data, int cmd);
-#ifdef CONFIG_WATER_CHECK
-extern int check_water_state(void);
-#endif
 ////////////////////////////////////////////////////////////////////////////////
 // external functions in s2mm005_cc.c
 ////////////////////////////////////////////////////////////////////////////////

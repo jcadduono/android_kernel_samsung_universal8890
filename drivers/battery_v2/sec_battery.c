@@ -609,7 +609,7 @@ static int sec_bat_check_afc_input_current(struct sec_battery_info *battery, int
 			input_current = battery->pdata->pre_afc_input_current; // 1000mA
 			work_delay = battery->pdata->pre_afc_work_delay;
 		} else {
-			input_current = battery->pdata->pre_wc_afc_input_current; // 500mA
+			input_current = battery->pdata->pre_wc_afc_input_current; // 480mA
 			work_delay = 4000; /* do not reduce this time, this is for noble pad */
 		}
 
@@ -1819,8 +1819,9 @@ static bool sec_bat_temperature_check(
 {
 	int temp_value;
 	int pre_health;
+	union power_supply_propval value;
 
-	if (battery->status == POWER_SUPPLY_STATUS_DISCHARGING) {
+	if ((battery->status == POWER_SUPPLY_STATUS_DISCHARGING) && (!battery->wpc_batt_temp_flag)) {
 		battery->health_change = false;
 		dev_dbg(battery->dev,
 			"%s: Charging Disabled\n", __func__);
@@ -1850,6 +1851,41 @@ static bool sec_bat_temperature_check(
 		return true;
 	}
 	pre_health = battery->health;
+
+	dev_info(battery->dev, "%s, wpc_batt_temp_flag(%d)\n",
+			__func__, battery->wpc_batt_temp_flag);
+	/* WPC_TEMP && BATT_TEMP mixed condition, wireless charging on */
+	if (battery->wpc_batt_temp_flag) {
+		if ((battery->wpc_temp <= battery->pdata->wpcbatt_wpc_temp_recovery) ||
+			(temp_value <= battery->pdata->wpcbatt_batt_temp_recovery)) {
+			dev_info(battery->dev, "%s, WPC_TEMP(%d), BATT_TEMP(%d). Wireless charging ON\n",
+					__func__, battery->wpc_temp, temp_value);
+			battery->wpc_batt_temp_flag = false;
+			battery->wc_enable = true;
+			battery->wc_enable_cnt = 0;
+			if (battery->pdata->wpc_en)
+				gpio_direction_output(battery->pdata->wpc_en, 0);
+		}
+	}
+
+	/* WPC_TEMP && BATT_TEMP mixed condition, wireless charging off */
+	if (is_wireless_type(battery->cable_type)) {
+		if ((battery->wpc_temp >= battery->pdata->wpcbatt_wpc_temp_threshold) &&
+			(temp_value >= battery->pdata->wpcbatt_batt_temp_threshold)) {
+
+			psy_do_property(battery->pdata->wireless_charger_name, get,
+				POWER_SUPPLY_EXT_PROP_WIRELESS_OP_FREQ, value);
+			if (value.intval < 115) {
+				dev_info(battery->dev, "%s, OP_FREQ(%d) WPC_TEMP(%d), BATT_TEMP(%d). Wireless charging OFF\n",
+						__func__, value.intval, battery->wpc_temp, temp_value);
+				battery->wpc_batt_temp_flag = true;
+				battery->wc_enable = false;
+				battery->wc_enable_cnt = 0;
+				if (battery->pdata->wpc_en)
+					gpio_direction_output(battery->pdata->wpc_en, 1);
+			}
+		}
+	}
 
 	if (temp_value >= battery->temp_highlimit_threshold) {
 		if (battery->health != POWER_SUPPLY_HEALTH_OVERHEATLIMIT) {
@@ -3343,7 +3379,7 @@ static void sec_bat_monitor_work(
 	dev_dbg(battery->dev, "%s: Start\n", __func__);
 	c_ts = ktime_to_timespec(ktime_get_boottime());
 
-	if (!battery->wc_enable) {
+	if (!battery->wc_enable && !battery->wpc_batt_temp_flag) {
 		pr_info("%s: wc_enable(%d), cnt(%d)\n",
 			__func__, battery->wc_enable, battery->wc_enable_cnt);
 		if (battery->wc_enable_cnt > battery->wc_enable_cnt_value) {
@@ -3487,6 +3523,11 @@ skip_current_monitor:
 			"%s: battery->stability_test(%d), battery->eng_not_full_status(%d)\n",
 			__func__, battery->stability_test, battery->eng_not_full_status);
 #endif
+
+	if (battery->pdata->wpc_en) {
+		dev_info(battery->dev,
+			"%s: wpc_en pin value is (%d)\n", __func__, gpio_get_value(battery->pdata->wpc_en));
+	}
 #if defined(CONFIG_SEC_FACTORY)
 	if ((battery->cable_type != POWER_SUPPLY_TYPE_BATTERY) && (battery->cable_type != POWER_SUPPLY_TYPE_OTG)) {
 #else
@@ -6128,6 +6169,7 @@ static int sec_bat_cable_check(struct sec_battery_info *battery,
 	case ATTACHED_DEV_SMARTDOCK_MUIC:
 	case ATTACHED_DEV_DESKDOCK_MUIC:
 	case ATTACHED_DEV_JIG_USB_ON_MUIC:
+	case ATTACHED_DEV_UNDEFINED_CHARGING_MUIC:
 		current_cable_type = POWER_SUPPLY_TYPE_BATTERY;
 		break;
 	case ATTACHED_DEV_OTG_MUIC:
@@ -6196,9 +6238,6 @@ static int sec_bat_cable_check(struct sec_battery_info *battery,
 	case ATTACHED_DEV_AFC_CHARGER_ERR_V_DUPLI_MUIC:
 	case ATTACHED_DEV_QC_CHARGER_ERR_V_MUIC:
 		current_cable_type = POWER_SUPPLY_TYPE_HV_ERR;
-		break;
-	case ATTACHED_DEV_UNDEFINED_CHARGING_MUIC:
-		current_cable_type = POWER_SUPPLY_TYPE_MAINS;
 		break;
 	case ATTACHED_DEV_HV_ID_ERR_UNDEFINED_MUIC:
 	case ATTACHED_DEV_HV_ID_ERR_UNSUPPORTED_MUIC:
@@ -6426,12 +6465,6 @@ static int usb_typec_handle_notification(struct notifier_block *nb,
 	}
 
 	sec_bat_set_misc_event(battery, BATT_MISC_EVENT_UNDEFINED_RANGE_TYPE,
-#if !defined(CONFIG_SAMSUNG_BATTERY_ENG_TEST) && !defined(CONFIG_SEC_FACTORY)
-		(battery->muic_cable_type != ATTACHED_DEV_JIG_UART_ON_VB_MUIC) &&
-		(battery->muic_cable_type != ATTACHED_DEV_JIG_USB_ON_MUIC) &&
-		(battery->muic_cable_type != ATTACHED_DEV_JIG_UART_OFF_VB_MUIC) &&
-		(battery->muic_cable_type != ATTACHED_DEV_JIG_UART_OFF_VB_FG_MUIC) &&
-#endif
 		(battery->muic_cable_type != ATTACHED_DEV_UNDEFINED_CHARGING_MUIC) &&
 		(battery->muic_cable_type != ATTACHED_DEV_UNDEFINED_RANGE_MUIC));
 
@@ -7230,7 +7263,7 @@ static int sec_bat_parse_dt(struct device *dev,
 		&pdata->pre_wc_afc_input_current);
 	if (ret) {
 		pr_info("%s : pre_wc_afc_input_current is Empty\n", __func__);
-		pdata->pre_wc_afc_input_current = 500;
+		pdata->pre_wc_afc_input_current = 480; /* wc input default */
 	}
 
 	ret = of_property_read_u32(np, "battery,store_mode_afc_input_current",
@@ -7394,6 +7427,34 @@ static int sec_bat_parse_dt(struct device *dev,
 		pdata->temp_highlimit_threshold_lpm, pdata->temp_highlimit_recovery_lpm,
 		pdata->temp_high_threshold_lpm, pdata->temp_high_recovery_lpm,
 		pdata->temp_low_threshold_lpm, pdata->temp_low_recovery_lpm);
+
+	ret = of_property_read_u32(np, "battery,wpcbatt_wpc_temp_threshold",
+		&pdata->wpcbatt_wpc_temp_threshold);
+	if (ret) {
+		pdata->wpcbatt_wpc_temp_threshold = 550;
+		pr_info("%s : wpcbatt_wpc_temp_threshold is Empty. set to 550.\n", __func__);
+	}
+
+	ret = of_property_read_u32(np, "battery,wpcbatt_batt_temp_threshold",
+		&pdata->wpcbatt_batt_temp_threshold);
+	if (ret) {
+		pdata->wpcbatt_batt_temp_threshold = 450;
+		pr_info("%s : wpcbatt_batt_temp_threshold is Empty. set to 450.\n", __func__);
+	}
+
+	ret = of_property_read_u32(np, "battery,wpcbatt_wpc_temp_recovery",
+		&pdata->wpcbatt_wpc_temp_recovery);
+	if (ret) {
+		pdata->wpcbatt_wpc_temp_recovery = 500;
+		pr_info("%s : wpcbatt_wpc_temp_recovery is Empty. set to 500.\n", __func__);
+	}
+
+	ret = of_property_read_u32(np, "battery,wpcbatt_batt_temp_recovery",
+		&pdata->wpcbatt_batt_temp_recovery);
+	if (ret) {
+		pdata->wpcbatt_batt_temp_recovery = 400;
+		pr_info("%s : wpcbatt_batt_temp_recovery is Empty. set to 400.\n", __func__);
+	}
 
 	ret = of_property_read_u32(np, "battery,full_check_type",
 		&pdata->full_check_type);
@@ -8019,6 +8080,7 @@ static int sec_battery_probe(struct platform_device *pdev)
 #endif
 
 	battery->health_change = false;
+	battery->wpc_batt_temp_flag = false;
 #if defined(CONFIG_BATTERY_SWELLING_SELF_DISCHARGING)
 	battery->self_discharging = false;
 	battery->force_discharging = false;

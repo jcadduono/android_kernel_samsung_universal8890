@@ -88,35 +88,17 @@ static void ccic_event_notifier(struct work_struct *data)
 
 	switch(event_work->dest){
 		case CCIC_NOTIFY_DEV_USB :
-			printk("usb:%s, dest=%s, id=%s, attach=%s, drp=%s\n", __func__,
-				CCIC_NOTI_DEST_Print[event_work->dest],	// &CCIC_NOTI_DEST_Print[event_work->dest][0],
+			pr_info("usb:%s, dest=%s, id=%s, attach=%s, drp=%s\n", __func__,
+				CCIC_NOTI_DEST_Print[event_work->dest],
 				CCIC_NOTI_ID_Print[event_work->id],
 				event_work->attach? "Attached": "Detached",
 				CCIC_NOTI_USB_STATUS_Print[event_work->event]);
 			break;
-		case CCIC_NOTIFY_DEV_MUIC :
-			printk("usb:%s, dest=%s, id=%s, attach=%s, rprd=%d\n", __func__,
-				CCIC_NOTI_DEST_Print[event_work->dest],	// &CCIC_NOTI_DEST_Print[event_work->dest][0],
-				CCIC_NOTI_ID_Print[event_work->id],
-				event_work->attach? "Attached": "Detached",
-				event_work->event);
-			break;
-		case CCIC_NOTIFY_ID_RID :
-			printk("usb:%s, dest=%s, id=%s, rid=%s\n", __func__,
-				CCIC_NOTI_DEST_Print[event_work->dest],	// &CCIC_NOTI_DEST_Print[event_work->dest][0],
-				CCIC_NOTI_ID_Print[event_work->id],
-				CCIC_NOTI_RID_Print[event_work->attach]);
-			break;
-		case CCIC_NOTIFY_ID_WATER :
-			printk("usb:%s, dest=%s, id=%s\n", __func__,
-				CCIC_NOTI_DEST_Print[event_work->dest],	// &CCIC_NOTI_DEST_Print[event_work->dest][0],
-				CCIC_NOTI_ID_Print[event_work->id]);
-			break;
 		default :
-			printk("usb:%s, dest=%s, id=%s, attach=%s, event=%d\n", __func__,
-				CCIC_NOTI_DEST_Print[event_work->dest],	// &CCIC_NOTI_DEST_Print[event_work->dest][0],
+			pr_info("usb:%s, dest=%s, id=%s, attach=%d, event=%d\n", __func__,
+				CCIC_NOTI_DEST_Print[event_work->dest],
 				CCIC_NOTI_ID_Print[event_work->id],
-				event_work->attach? "Attached": "Detached",
+				event_work->attach,
 				event_work->event);
 			break;
 	}
@@ -140,7 +122,7 @@ void ccic_event_work(void *data, int dest, int id, int attach, int event)
 	struct s2mm005_data *usbpd_data = data;
 	struct ccic_state_work * event_work;
 
-	printk("usb: %s\n", __func__);
+	pr_info("usb: %s\n", __func__);
 	event_work = kmalloc(sizeof(struct ccic_state_work), GFP_ATOMIC);
 	INIT_WORK(&event_work->ccic_work, ccic_event_notifier);
 
@@ -151,7 +133,7 @@ void ccic_event_work(void *data, int dest, int id, int attach, int event)
 
 #if defined(CONFIG_DUAL_ROLE_USB_INTF)
 	if (id == CCIC_NOTIFY_ID_USB) {
-		printk("usb: %s, dest=%d, event=%d, usbpd_data->data_role=%d, usbpd_data->try_state_change=%d\n",
+		pr_info("usb: %s, dest=%d, event=%d, usbpd_data->data_role=%d, usbpd_data->try_state_change=%d\n",
 			__func__, dest, event, usbpd_data->data_role, usbpd_data->try_state_change);
 
 		usbpd_data->data_role = event;
@@ -162,7 +144,7 @@ void ccic_event_work(void *data, int dest, int id, int attach, int event)
 		if (usbpd_data->try_state_change &&
 			(usbpd_data->data_role != USB_STATUS_NOTIFY_DETACH)) {
 			// Role change try and new mode detected
-			printk("usb: %s, reverse_completion\n", __func__);
+			pr_info("usb: %s, reverse_completion\n", __func__);
 			complete(&usbpd_data->reverse_completion);
 		}
 	}
@@ -373,13 +355,9 @@ void process_cc_water_det(void * data)
 {
 	struct s2mm005_data *usbpd_data = data;
 
-	printk("%s\n",__func__);
+	pr_info("%s\n",__func__);
 	s2mm005_int_clear(usbpd_data);	// interrupt clear
-	if (usbpd_data->firm_ver[2] >= 0x18){
-		s2mm005_manual_LPM(usbpd_data, 0x9);
-	} else {
-		s2mm005_manual_LPM(usbpd_data, 0x1);
-	}
+	s2mm005_manual_LPM(usbpd_data, 0x9);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -395,11 +373,7 @@ void process_cc_attach(void * data,u8 *plug_attach_done)
 	uint16_t REG_ADD;
 	struct otg_notify *o_notify = get_otg_notify();
 
-	printk("%s\n",__func__);
-
-	if ((usbpd_data->firm_ver[2] >= 0x15 && usbpd_data->firm_ver[2] <= 0x18) ||
-		(usbpd_data->firm_ver[2] == 0x1D) ||
-		(usbpd_data->firm_ver[2] >= 0x1E && usbpd_data->hw_rev >= 9)) {
+	if (usbpd_data->hw_rev >= 9) {
 		R_DATA[0] = 0x00;
 		R_DATA[1] = 0x00;
 		R_DATA[2] = 0x00;
@@ -409,7 +383,7 @@ void process_cc_attach(void * data,u8 *plug_attach_done)
 		s2mm005_read_byte(i2c, REG_ADD, R_DATA, R_len);
 
 		usbpd_data->water_det = R_DATA[0] & (0x1 << 3);
-		dev_info(&i2c->dev, "WATER: reg:0x%02X WATER=%d\n", R_DATA[0], usbpd_data->water_det);
+		dev_info(&i2c->dev, "%s: WATER reg:0x%02X WATER=%d\n", __func__, R_DATA[0], usbpd_data->water_det);
 	}
 
 	if (usbpd_data->water_det) {
@@ -581,7 +555,7 @@ void process_cc_get_int_status(void *data, uint32_t *pPRT_MSG, MSG_IRQ_STATUS_Ty
 	uint32_t IrqPrint;
 	VDM_MSG_IRQ_STATUS_Type VDM_MSG_IRQ_State;
 
-	printk("%s\n",__func__);	
+	pr_info("%s\n",__func__);	
 	for(cnt = 0;cnt < 48;cnt++)
 	{
 		R_INT_STATUS[cnt] = 0;
@@ -655,7 +629,7 @@ void process_cc_rid(void *data)
 	static int prev_rid = RID_OPEN;
 	u8 rid;
 
-	printk("%s\n",__func__);	
+	pr_info("%s\n",__func__);	
 	s2mm005_read_byte_16(i2c, 0x50, &rid);	// fundtion read , 0x20 , 0x0:detach , not 0x0 attach :  source 3,6,7 / sink 16:17:21:29(decimanl)
 	dev_info(&i2c->dev, "prev_rid:%x , RID:%x\n",prev_rid, rid);
 	usbpd_data->cur_rid = rid;

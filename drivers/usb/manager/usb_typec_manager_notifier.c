@@ -4,9 +4,6 @@
 #include <linux/usb/manager/usb_typec_manager_notifier.h>
 
 #include <linux/ccic/ccic_notifier.h>
-#ifdef CONFIG_WATER_CHECK
-#include <linux/ccic/s2mm005_ext.h>
-#endif
 
 #include <linux/fs.h>
 #include <linux/uaccess.h>
@@ -18,6 +15,7 @@
 #endif
 #include <linux/usb_notify.h>
 
+#define MANAGER_WATER_EVENT_ENABLE
 #define DEBUG
 #define SET_MANAGER_NOTIFIER_BLOCK(nb, fn, dev) do {	\
 		(nb)->notifier_call = (fn);		\
@@ -29,7 +27,7 @@
 
 struct device *manager_device;
 manager_data_t typec_manager;
-#ifdef CONFIG_WATER_CHECK
+#ifdef MANAGER_WATER_EVENT_ENABLE
 static DECLARE_COMPLETION(ccic_attach_done);
 #endif
 #define USB_STATE_PATH		"/sys/class/android_usb/android0/state"
@@ -168,7 +166,10 @@ static void muic_work_without_ccic(struct work_struct *work)
 	if (typec_manager.muic_attach_state_without_ccic) {
 		switch (typec_manager.muic_action) {
 			case MUIC_NOTIFY_CMD_ATTACH:
-				if(typec_manager.vbus_state == STATUS_VBUS_HIGH) {
+#if defined(CONFIG_VBUS_NOTIFIER)
+				if(typec_manager.vbus_state == STATUS_VBUS_HIGH)
+#endif
+				{
 					p_usb_noti.src = CCIC_NOTIFY_DEV_MUIC;
 					p_usb_noti.dest = CCIC_NOTIFY_DEV_USB;
 					p_usb_noti.id = CCIC_NOTIFY_ID_USB;
@@ -201,6 +202,9 @@ static int manager_handle_ccic_notification(struct notifier_block *nb,
 {
 	MANAGER_NOTI_TYPEDEF *p_noti = (MANAGER_NOTI_TYPEDEF *)data;
 	CC_NOTI_ATTACH_TYPEDEF bat_noti;
+#ifdef MANAGER_WATER_EVENT_ENABLE
+	CC_NOTI_ATTACH_TYPEDEF muic_noti;
+#endif
 	int ret = 0;
 
 	pr_info("usb: [M] %s: src:%s dest:%s id:%s\n", __func__,
@@ -226,7 +230,7 @@ static int manager_handle_ccic_notification(struct notifier_block *nb,
 	case CCIC_NOTIFY_ID_ATTACH:		// for MUIC
 			if (((CC_NOTI_ATTACH_TYPEDEF *)p_noti)->attach == CCIC_NOTIFY_ATTACH) {
 				typec_manager.water_det = 0;
-#ifdef CONFIG_WATER_CHECK
+#ifdef MANAGER_WATER_EVENT_ENABLE
 				complete(&ccic_attach_done);
 #endif
 			}
@@ -266,25 +270,43 @@ static int manager_handle_ccic_notification(struct notifier_block *nb,
 			cancel_delayed_work_sync(&typec_manager.cable_check_work);
 		break;
 	case CCIC_NOTIFY_ID_WATER:
-		typec_manager.water_det = 1;
-#ifdef CONFIG_WATER_CHECK
-		complete(&ccic_attach_done);
-		if (typec_manager.ccic_attach_state == CCIC_NOTIFY_ATTACH) {
-			p_noti->sub3 = ATTACHED_DEV_UNDEFINED_RANGE_MUIC; /* cable_type */
+#ifdef MANAGER_WATER_EVENT_ENABLE
+		if(!typec_manager.water_det) {
+				typec_manager.water_det = 1;
+				complete(&ccic_attach_done);
+
+				muic_noti.src = CCIC_NOTIFY_DEV_CCIC;
+				muic_noti.dest = CCIC_NOTIFY_DEV_MUIC;
+				muic_noti.id = CCIC_NOTIFY_ID_WATER;
+				muic_noti.attach = CCIC_NOTIFY_ATTACH;
+				muic_noti.rprd = 0;
+				muic_noti.cable_type = 0;
+				muic_noti.pd = NULL;
+				manager_notifier_notify(&muic_noti);
+
+				if (typec_manager.muic_action == MUIC_NOTIFY_CMD_ATTACH) {
+					p_noti->sub3 = ATTACHED_DEV_UNDEFINED_RANGE_MUIC; /* cable_type */
+				} else {
+					/* Skip detach case */
+					return 0;
+				}
 		} else {
-			/* Skip detach case */
+			/* Ignore duplicate events */
 			return 0;
 		}
 #else
-		if (typec_manager.muic_action == MUIC_NOTIFY_CMD_ATTACH) {
-			bat_noti.src = CCIC_NOTIFY_DEV_CCIC;
-			bat_noti.dest = CCIC_NOTIFY_DEV_BATTERY;
-			bat_noti.id = CCIC_NOTIFY_ID_ATTACH;
-			bat_noti.attach = CCIC_NOTIFY_DETACH;
-			bat_noti.rprd = 0;
-			bat_noti.cable_type = typec_manager.muic_cable_type;
-			bat_noti.pd = NULL;
-			manager_notifier_notify(&bat_noti);
+		if(!typec_manager.water_det) {
+			typec_manager.water_det = 1;
+			if (typec_manager.muic_action == MUIC_NOTIFY_CMD_ATTACH) {
+				bat_noti.src = CCIC_NOTIFY_DEV_CCIC;
+				bat_noti.dest = CCIC_NOTIFY_DEV_BATTERY;
+				bat_noti.id = CCIC_NOTIFY_ID_ATTACH;
+				bat_noti.attach = CCIC_NOTIFY_DETACH;
+				bat_noti.rprd = 0;
+				bat_noti.cable_type = typec_manager.muic_cable_type;
+				bat_noti.pd = NULL;
+				manager_notifier_notify(&bat_noti);
+			}
 		}
 		return 0;
 #endif
@@ -318,27 +340,12 @@ static int manager_handle_muic_notification(struct notifier_block *nb,
 	if(typec_manager.water_det){
 		/* If Water det irq case is ignored */
 		if(p_noti->attach) typec_manager.muic_attach_state_without_ccic = 1;
-		pr_info("usb: [M] %s: Water detected case--1\n", __func__);
+		pr_info("usb: [M] %s: Water detected case\n", __func__);
 		return 0;
 	}
 
 	if (p_noti->attach && typec_manager.ccic_attach_state == CCIC_NOTIFY_DETACH) {
 		typec_manager.muic_attach_state_without_ccic = 1;
-#ifdef CONFIG_WATER_CHECK
-		typec_manager.water_det = check_water_state();
-		if(typec_manager.water_det){
-			pr_info("usb: [M] %s: Water detected case--2\n", __func__);
-			p_noti->src = CCIC_NOTIFY_DEV_CCIC;
-			p_noti->dest = CCIC_NOTIFY_DEV_BATTERY;
-			p_noti->id = CCIC_NOTIFY_ID_WATER;
-			p_noti->attach = CCIC_NOTIFY_ATTACH;
-			p_noti->rprd = 0;
-			p_noti->cable_type = ATTACHED_DEV_UNDEFINED_RANGE_MUIC;
-			p_noti->pd = NULL;
-			manager_notifier_notify(p_noti);
-			return 0;		
-		}
-#endif
 	}
 
 	switch (p_noti->cable_type) {
@@ -410,7 +417,7 @@ static int manager_handle_vbus_notification(struct notifier_block *nb,
 				unsigned long action, void *data)
 {
 	vbus_status_t vbus_type = *(vbus_status_t *)data;
-#ifdef CONFIG_WATER_CHECK
+#ifdef MANAGER_WATER_EVENT_ENABLE
 	CC_NOTI_ATTACH_TYPEDEF bat_noti;
 #endif
 	CC_NOTI_ATTACH_TYPEDEF muic_noti;
@@ -422,7 +429,7 @@ static int manager_handle_vbus_notification(struct notifier_block *nb,
 
 	typec_manager.vbus_state = vbus_type;
 
-#ifdef CONFIG_WATER_CHECK
+#ifdef MANAGER_WATER_EVENT_ENABLE
 	init_completion(&ccic_attach_done);
 	if ((typec_manager.water_det == 1) && (vbus_type == STATUS_VBUS_HIGH) )
 		wait_for_completion_timeout(&ccic_attach_done,
@@ -431,7 +438,7 @@ static int manager_handle_vbus_notification(struct notifier_block *nb,
 
 	switch (vbus_type) {
 	case STATUS_VBUS_HIGH:
-#ifdef CONFIG_WATER_CHECK
+#ifdef MANAGER_WATER_EVENT_ENABLE
 		if (typec_manager.water_det) {
 			bat_noti.src = CCIC_NOTIFY_DEV_CCIC;
 			bat_noti.dest = CCIC_NOTIFY_DEV_BATTERY;
@@ -445,7 +452,7 @@ static int manager_handle_vbus_notification(struct notifier_block *nb,
 #endif
 		break;
 	case STATUS_VBUS_LOW:
-#ifdef CONFIG_WATER_CHECK
+#ifdef MANAGER_WATER_EVENT_ENABLE
 		if (typec_manager.water_det) {
 			bat_noti.src = CCIC_NOTIFY_DEV_CCIC;
 			bat_noti.dest = CCIC_NOTIFY_DEV_BATTERY;
@@ -501,29 +508,33 @@ int manager_notifier_register(struct notifier_block *nb, notifier_fn_t notifier,
 		/* CC_NOTI_ATTACH_TYPEDEF */
 		m_noti.src = CCIC_NOTIFY_DEV_MANAGER;
 		m_noti.dest = CCIC_NOTIFY_DEV_BATTERY;
-		m_noti.id = CCIC_NOTIFY_ID_ATTACH;
 		m_noti.sub1 = (typec_manager.ccic_attach_state || typec_manager.muic_action);
+		m_noti.sub2 = 0;
 		m_noti.pd = typec_manager.pd;
-
-		if(typec_manager.pd_con_state) {
-			pr_info("usb: [M] %s: PD is attached already\n", __func__);
-			m_noti.id = CCIC_NOTIFY_ID_POWER_STATUS;
-		} else if(typec_manager.cable_type != MANAGER_NOTIFY_MUIC_NONE) {
-			m_noti.sub3= typec_manager.muic_cable_type;
+		if(typec_manager.water_det && m_noti.sub1) {
+			m_noti.id = CCIC_NOTIFY_ID_WATER;
+			m_noti.sub3 = ATTACHED_DEV_UNDEFINED_RANGE_MUIC;
 		} else {
-			switch(typec_manager.ccic_drp_state){
-				case USB_STATUS_NOTIFY_ATTACH_UFP:
-					m_noti.sub3 = ATTACHED_DEV_USB_MUIC;
-					break;
-				case USB_STATUS_NOTIFY_ATTACH_DFP:
-					m_noti.sub3 = ATTACHED_DEV_OTG_MUIC;
-					break;
-				default:
-					m_noti.sub3 = ATTACHED_DEV_NONE_MUIC;
-					break;
+			m_noti.id = CCIC_NOTIFY_ID_ATTACH;
+			if(typec_manager.pd_con_state) {
+				pr_info("usb: [M] %s: PD is attached already\n", __func__);
+				m_noti.id = CCIC_NOTIFY_ID_POWER_STATUS;
+			} else if(typec_manager.cable_type != MANAGER_NOTIFY_MUIC_NONE) {
+				m_noti.sub3= typec_manager.muic_cable_type;
+			} else {
+				switch(typec_manager.ccic_drp_state){
+					case USB_STATUS_NOTIFY_ATTACH_UFP:
+						m_noti.sub3 = ATTACHED_DEV_USB_MUIC;
+						break;
+					case USB_STATUS_NOTIFY_ATTACH_DFP:
+						m_noti.sub3 = ATTACHED_DEV_OTG_MUIC;
+						break;
+					default:
+						m_noti.sub3 = ATTACHED_DEV_NONE_MUIC;
+						break;
+				}
 			}
 		}
-
 		pr_info("usb: [M] %s BATTERY: cable_type=%d (%s) \n", __func__, m_noti.sub3,
 			typec_manager.cable_type? "MUIC" : "CCIC");
 		nb->notifier_call(nb, m_noti.id, &(m_noti));

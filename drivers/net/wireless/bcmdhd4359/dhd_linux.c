@@ -25,7 +25,7 @@
  *
  * <<Broadcom-WL-IPTag/Open:>>
  *
- * $Id: dhd_linux.c 645029 2016-06-22 08:27:27Z $
+ * $Id: dhd_linux.c 647186 2016-07-04 09:17:19Z $
  */
 
 #include <typedefs.h>
@@ -14375,6 +14375,17 @@ dhd_log_dump_get_timestamp(void)
 #endif /* DHD_LOG_DUMP */
 
 #ifdef DHD_DEBUG_UART
+bool
+dhd_debug_uart_is_running(struct net_device *dev)
+{
+	dhd_info_t *dhd = DHD_DEV_INFO(dev);
+
+	if (dhd->duart_execute)
+		return TRUE;
+
+	return FALSE;
+}
+
 static void
 dhd_debug_uart_exec_rd(void *handle, void *event_info, u8 event)
 {
@@ -14405,6 +14416,7 @@ dhd_debug_uart_exec(dhd_pub_t *dhdp, char *cmd)
 			ret = call_usermodehelper(argv[0], argv, envp, UMH_WAIT_PROC);
 			DHD_ERROR(("DHD: %s - %s %s ret = %d\n",
 				__FUNCTION__, DHD_DEBUG_UART_EXEC_PATH, cmd, ret));
+			dhdp->info->duart_execute = FALSE;
 
 #ifdef DHD_LOG_DUMP
 			if (dhdp->memdump_type != DUMP_TYPE_BY_SYSDUMP)

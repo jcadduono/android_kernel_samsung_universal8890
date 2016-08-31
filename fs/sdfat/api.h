@@ -40,7 +40,8 @@ extern "C" {
 
 /* Read-ahead related                                */
 /* First config vars. should be pow of 2             */
-#define FAT_RA_SECTORS	8
+#define FCACHE_MAX_RA_SIZE	(PAGE_SIZE)
+#define DCACHE_MAX_RA_SIZE	(128*1024)
 
 /*----------------------------------------------------------------------*/
 /*  Constant & Macro Definitions                                        */

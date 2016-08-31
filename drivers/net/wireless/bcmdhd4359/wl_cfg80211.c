@@ -24,7 +24,7 @@
  *
  * <<Broadcom-WL-IPTag/Open:>>
  *
- * $Id: wl_cfg80211.c 644974 2016-06-22 04:54:25Z $
+ * $Id: wl_cfg80211.c 647186 2016-07-04 09:17:19Z $
  */
 /* */
 #include <typedefs.h>
@@ -1744,12 +1744,13 @@ wl_cfg80211_add_virtual_iface(struct wiphy *wiphy,
 #endif 
 #endif /* PROP_TXSTATUS_VSDB */
 
+
 		/* Dual p2p doesn't support multiple P2PGO interfaces,
 		 * p2p_go_count is the counter for GO creation
 		 * requests.
 		 */
-		if ((cfg->p2p->p2p_go_count > 0) && (type == NL80211_IFTYPE_P2P_GO)) {
-			WL_ERR(("Fw doesnot support  multiple Go"));
+	     if	((cfg->p2p->p2p_go_count > 0) && (type == NL80211_IFTYPE_P2P_GO)) {
+		     WL_ERR(("Fw doesnot support  multiple Go"));
 			return ERR_PTR(-ENOMEM);
 		}
 		/* In concurrency case, STA may be already associated in a particular channel.
@@ -5874,6 +5875,7 @@ wl_cfg80211_get_station(struct wiphy *wiphy, struct net_device *dev,
 	} else if (wl_get_mode_by_netdev(cfg, dev) == WL_MODE_BSS ||
 		wl_get_mode_by_netdev(cfg, dev) == WL_MODE_IBSS) {
 		get_pktcnt_t pktcnt;
+		wl_if_stats_t *if_stats = NULL;
 		u8 *curmacp;
 
 		if (cfg->roam_offload) {
@@ -5976,18 +5978,40 @@ wl_cfg80211_get_station(struct wiphy *wiphy, struct net_device *dev,
 		sinfo->filled |= STA_INFO_BIT(INFO_SIGNAL);
 		sinfo->signal = rssi;
 		WL_DBG(("RSSI %d dBm\n", rssi));
-		err = wldev_ioctl(dev, WLC_GET_PKTCNTS, &pktcnt,
-			sizeof(pktcnt), false);
-		if (!err) {
-			sinfo->filled |= (STA_INFO_BIT(INFO_RX_PACKETS) |
-				STA_INFO_BIT(INFO_RX_DROP_MISC) |
-				STA_INFO_BIT(INFO_TX_PACKETS) |
-				STA_INFO_BIT(INFO_TX_FAILED));
-			sinfo->rx_packets = pktcnt.rx_good_pkt;
-			sinfo->rx_dropped_misc = pktcnt.rx_bad_pkt;
-			sinfo->tx_packets = pktcnt.tx_good_pkt;
-			sinfo->tx_failed  = pktcnt.tx_bad_pkt;
+
+		if ((if_stats = kmalloc(sizeof(*if_stats), GFP_KERNEL)) == NULL) {
+			WL_ERR(("%s(%d): kmalloc failed\n", __FUNCTION__, __LINE__));
+			goto error;
 		}
+		memset(if_stats, 0, sizeof(*if_stats));
+
+		err = wldev_iovar_getbuf(dev, "if_counters", NULL, 0,
+			(char *)if_stats, sizeof(*if_stats), NULL);
+		if (err) {
+			WL_ERR(("%s: if_counters not supported ret=%d\n",
+				__FUNCTION__, err));
+
+			err = wldev_ioctl(dev, WLC_GET_PKTCNTS, &pktcnt,
+				sizeof(pktcnt), false);
+			if (!err) {
+				sinfo->rx_packets = pktcnt.rx_good_pkt;
+				sinfo->rx_dropped_misc = pktcnt.rx_bad_pkt;
+				sinfo->tx_packets = pktcnt.tx_good_pkt;
+				sinfo->tx_failed  = pktcnt.tx_bad_pkt;
+			}
+		} else {
+			sinfo->rx_packets = (uint32)dtoh64(if_stats->rxframe);
+			sinfo->rx_dropped_misc = 0;
+			sinfo->tx_packets = (uint32)dtoh64(if_stats->txfrmsnt);
+			sinfo->tx_failed = (uint32)dtoh64(if_stats->txerror) +
+				(uint32)dtoh64(if_stats->txfail);
+		}
+
+		sinfo->filled |= (STA_INFO_BIT(INFO_RX_PACKETS) |
+			STA_INFO_BIT(INFO_RX_DROP_MISC) |
+			STA_INFO_BIT(INFO_TX_PACKETS) |
+			STA_INFO_BIT(INFO_TX_FAILED));
+
 get_station_err:
 		if (err && (err != -ERESTARTSYS)) {
 			/* Disconnect due to zero BSSID or error to get RSSI */
@@ -5995,6 +6019,10 @@ get_station_err:
 			wl_clr_drv_status(cfg, CONNECTED, dev);
 			CFG80211_DISCONNECTED(dev, 0, NULL, 0, false, GFP_KERNEL);
 			wl_link_down(cfg);
+		}
+error:
+		if (if_stats) {
+			kfree(if_stats);
 		}
 	}
 	else {
@@ -9334,7 +9362,8 @@ wl_cfg80211_change_beacon(
 
 	WL_DBG(("Enter \n"));
 
-	if (dev == bcmcfg_to_prmry_ndev(cfg)) {
+	if (dev == bcmcfg_to_prmry_ndev(cfg) ||
+		(dev == ((struct net_device *)cfgdev_to_ndev(cfg->bss_cfgdev)))) {
 		dev_role = NL80211_IFTYPE_AP;
 	}
 #if defined(WL_ENABLE_P2P_IF)
@@ -9377,6 +9406,7 @@ wl_cfg80211_change_beacon(
 		goto fail;
 	}
 
+	printf("%s dev_role == %x \n", __FUNCTION__, dev_role);
 	if (dev_role == NL80211_IFTYPE_AP) {
 		if (wl_cfg80211_hostapd_sec(dev, &ies, bssidx) < 0) {
 			WL_ERR(("Hostapd update sec failed \n"));
@@ -11221,9 +11251,28 @@ wl_notify_connect_status(struct bcm_cfg80211 *cfg, bcm_struct_cfgdev *cfgdev,
 					wl_init_prof(cfg, ndev);
 				}
 #ifdef WBTEXT
-				/* when STA was disconnected, reset roam profile */
-				if (ndev->ieee80211_ptr->iftype == NL80211_IFTYPE_STATION)
-					wl_cfg80211_wbtext_set_default(ndev);
+				/* when STA was disconnected, clear join pref and set wbtext */
+				if (ndev->ieee80211_ptr->iftype == NL80211_IFTYPE_STATION) {
+					char smbuf[WLC_IOCTL_SMLEN];
+					char clear[] = { 0x01, 0x02, 0x00, 0x00, 0x03,
+						0x02, 0x00, 0x00, 0x04, 0x02, 0x00, 0x00 };
+					if ((err = wldev_iovar_setbuf(ndev, "join_pref", clear,
+							sizeof(clear), smbuf, sizeof(smbuf), NULL))
+							== BCME_OK) {
+						if ((err = wldev_iovar_setint(ndev,
+								"wnm_bsstrans_resp",
+								WL_BSSTRANS_POLICY_PRODUCT))
+								== BCME_OK) {
+							wl_cfg80211_wbtext_set_default(ndev);
+						} else {
+							WL_ERR(("%s: Failed to set wbtext = %d\n",
+								__FUNCTION__, err));
+						}
+					} else {
+						WL_ERR(("%s: Failed to clear join pref = %d\n",
+							__FUNCTION__, err));
+					}
+				}
 #endif /* WBTEXT */
 			}
 			else if (wl_get_drv_status(cfg, CONNECTING, ndev)) {
@@ -12461,7 +12510,13 @@ wl_notify_rx_mgmt_frame(struct bcm_cfg80211 *cfg, bcm_struct_cfgdev *cfgdev,
 
 	memset(&bssid, 0, ETHER_ADDR_LEN);
 
-	ndev = cfgdev_to_wlc_ndev(cfgdev, cfg);
+ 	if (cfg->bss_cfgdev && event == WLC_E_PROBREQ_MSG) {
+		ndev = cfgdev_to_ndev(cfg->bss_cfgdev);
+	 	cfgdev = cfg->bss_cfgdev;
+	} else {
+		ndev = cfgdev_to_wlc_ndev(cfgdev, cfg);
+	}
+        printf("%s ndev->name = %s \n", __FUNCTION__, ndev->name);
 
 	if (channel <= CH_MAX_2G_CHANNEL)
 		band = wiphy->bands[IEEE80211_BAND_2GHZ];

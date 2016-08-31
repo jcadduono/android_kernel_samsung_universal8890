@@ -213,6 +213,7 @@ struct sec_battery_info {
 
 	/* health change check*/
 	bool health_change;
+	bool wpc_batt_temp_flag;
 	/* ovp-uvlo health check */
 	int health_check_count;
 

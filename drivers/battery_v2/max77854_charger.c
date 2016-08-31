@@ -675,11 +675,13 @@ static void max77854_charger_initialize(struct max77854_charger_data *charger)
 
 	/*
 	 * charge current 466mA(default)
-	 * otg current limit 1500mA
+	 * otg current limit 900mA
 	 */
 	max77854_update_reg(charger->i2c, MAX77854_CHG_REG_CNFG_02,
-			(0x03 << 6), 0xC0);
+			(0x01 << 6), 0xC0);
 
+	/* BAT to SYS OCP 5.00A */
+	max77854_update_reg(charger->i2c, MAX77854_CHG_REG_CNFG_05, 0x05, 0x07);
 	/*
 	 * top off current 150mA
 	 * top off timer 70min
@@ -1035,7 +1037,7 @@ static int max77854_chg_set_property(struct power_supply *psy,
 			/* OTG on, boost on */
 			max77854_update_reg(charger->i2c, MAX77854_CHG_REG_CNFG_00,
 				CHG_CNFG_00_OTG_CTRL, CHG_CNFG_00_OTG_CTRL);
-
+			charger->otg_on = true;
 			/* Update CHG_CNFG_11 to 0x50(5V) */
 			max77854_write_reg(charger->i2c,
 				MAX77854_CHG_REG_CNFG_11, 0x50);
@@ -1043,7 +1045,7 @@ static int max77854_chg_set_property(struct power_supply *psy,
 			/* OTG off(UNO on), boost off */
 			max77854_update_reg(charger->i2c, MAX77854_CHG_REG_CNFG_00,
 				0, CHG_CNFG_00_OTG_CTRL);
-
+			charger->otg_on = false;
 			/* Update CHG_CNFG_11 to 0x00(3V) */
 			max77854_write_reg(charger->i2c,
 				MAX77854_CHG_REG_CNFG_11, 0x00);
@@ -1060,7 +1062,6 @@ static int max77854_chg_set_property(struct power_supply *psy,
 					POWER_SUPPLY_PROP_INPUT_VOLTAGE_REGULATION, value);
 			}
 		}
-		charger->otg_on = val->intval;
 		max77854_read_reg(charger->i2c, MAX77854_CHG_REG_INT_MASK,
 			&chg_int_state);
 		max77854_read_reg(charger->i2c, MAX77854_CHG_REG_CNFG_00,
@@ -1180,7 +1181,7 @@ static int max77854_otg_set_property(struct power_supply *psy,
 			/* OTG on, boost on */
 			max77854_update_reg(charger->i2c, MAX77854_CHG_REG_CNFG_00,
 				CHG_CNFG_00_OTG_CTRL, CHG_CNFG_00_OTG_CTRL);
-
+			charger->otg_on = true;
 			/* Update CHG_CNFG_11 to 0x50(5V) */
 			max77854_write_reg(charger->i2c,
 				MAX77854_CHG_REG_CNFG_11, 0x50);
@@ -1188,7 +1189,7 @@ static int max77854_otg_set_property(struct power_supply *psy,
 			/* OTG off(UNO on), boost off */
 			max77854_update_reg(charger->i2c, MAX77854_CHG_REG_CNFG_00,
 				0, CHG_CNFG_00_OTG_CTRL);
-
+			charger->otg_on = false;
 			/* Update CHG_CNFG_11 to 0x00(3V) */
 			max77854_write_reg(charger->i2c,
 				MAX77854_CHG_REG_CNFG_11, 0x00);
@@ -1205,7 +1206,6 @@ static int max77854_otg_set_property(struct power_supply *psy,
 					POWER_SUPPLY_PROP_INPUT_VOLTAGE_REGULATION, value);
 			}
 		}
-		charger->otg_on = val->intval;
 		max77854_read_reg(charger->i2c, MAX77854_CHG_REG_INT_MASK,
 			&chg_int_state);
 		max77854_read_reg(charger->i2c, MAX77854_CHG_REG_CNFG_00,

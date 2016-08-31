@@ -523,6 +523,7 @@ static int muic_probe(struct platform_device *pdev)
 
 #if defined(CONFIG_MUIC_SUPPORT_CCIC)
 	pmuic->opmode = get_ccic_info() & 0x0F;
+	pmuic->afc_water_disable = false;
 #endif
 	/* set switch device's driver_data */
 	dev_set_drvdata(switch_device, pmuic);

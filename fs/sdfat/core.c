@@ -602,10 +602,11 @@ static s32 find_location(struct super_block *sb, CHAIN_T *p_dir, s32 entry, u32 
 
 DENTRY_T *get_dentry_in_dir(struct super_block *sb, CHAIN_T *p_dir, s32 entry, u32 *sector)
 {
+	FS_INFO_T *fsi = &(SDFAT_SB(sb)->fsi);
+	u32 dentries_per_page = PAGE_SIZE >> DENTRY_SIZE_BITS;
 	s32 off;
 	u32 sec;
 	u8 *buf;
-	FS_INFO_T *fsi = &(SDFAT_SB(sb)->fsi);
 
 	if (p_dir->dir == DIR_DELETED) {
 		EMSG("%s : abnormal access to deleted dentry\n", __func__);
@@ -617,11 +618,10 @@ DENTRY_T *get_dentry_in_dir(struct super_block *sb, CHAIN_T *p_dir, s32 entry, u
 		return NULL;
 
 	/* DIRECTORY READAHEAD :
-	 * if first entry of a directory except root directory of fat12/16,
-	 * then do read-ahead
+	 * Try to read ahead per a page except root directory of fat12/16
 	 */
 	if ((!IS_CLUS_FREE(p_dir->dir)) &&
-		!(entry & (fsi->dentries_per_clu - 1)))
+		!(entry & (dentries_per_page - 1)))
 		dcache_readahead(sb, sec);
 
 	buf = dcache_getblk(sb, sec);
@@ -1709,6 +1709,14 @@ s32 fscore_mount(struct super_block *sb)
 		opts->improved_allocation = 0;
 		opts->defrag = 0;
 		ret = mount_fat16(sb, p_pbr);
+	}
+
+	/* warn misaligned data data start sector must be a multiple of clu_size */
+	if (fsi->data_start_sector & (fsi->sect_per_clus - 1)) {
+		sdfat_log_msg(sb, KERN_ERR,
+			"media has misaligned data area (start sect : %u, "
+			"sect_per_clus : %u)",
+			fsi->data_start_sector, fsi->sect_per_clus);
 	}
 free_bh:
 	brelse(tmp_bh);

@@ -72,10 +72,21 @@ static int dwc3_ep0_start_trans(struct dwc3 *dwc, u8 epnum, dma_addr_t buf_dma,
 
 	trb = dwc->ep0_trb;
 
+	if (!trb) {
+		dev_err(dwc->dev, "trb is NULL\n");
+		return -EINVAL;
+	}
 	trb->bpl = lower_32_bits(buf_dma);
 	trb->bph = upper_32_bits(buf_dma);
 	trb->size = len;
 	trb->ctrl = type;
+
+	if (trb->bpl == 0 && trb->bph == 0) {
+		dev_err(dwc->dev, "trb buffer addr is NULL\n");
+		trb->size = 0;
+		trb->ctrl = 0;
+		return -EINVAL;
+	}
 
 	trb->ctrl |= (DWC3_TRB_CTRL_HWO
 			| DWC3_TRB_CTRL_LST

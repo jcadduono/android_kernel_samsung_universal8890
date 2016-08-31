@@ -249,6 +249,8 @@ static void sec_multi_chg_check_input_current(struct sec_multi_charger_info *cha
 
 		psy_do_property(charger->pdata->sub_charger_name, set,
 			POWER_SUPPLY_PROP_CHARGING_ENABLED, value);
+
+		sec_multi_chg_set_charging_current(charger);
 	}
 }
 

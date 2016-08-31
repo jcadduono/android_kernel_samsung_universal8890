@@ -839,8 +839,17 @@ static ssize_t lcd_type_show(struct device *dev,
 	struct device_attribute *attr, char *buf)
 {
 	struct panel_private *priv = dev_get_drvdata(dev);
+	char buf_print[3] = {0x00, };
 
-	sprintf(buf, "SDC_%02X%02X%02X\n", priv->id[0], priv->id[1], priv->id[2]);
+	if((priv->id[0] == 0xff) && (priv->id[1] == 0xff) && (priv->id[2] == 0xff))	{
+		buf_print[0] = buf_print[1] = buf_print[2] = 0x00;
+	} else {
+		buf_print[0] = priv->id[0];
+		buf_print[1] = priv->id[1];
+		buf_print[2] = priv->id[2];
+	}
+
+	sprintf(buf, "SDC_%02X%02X%02X\n", buf_print[0], buf_print[1], buf_print[2]);
 
 	return strlen(buf);
 }
@@ -1216,7 +1225,7 @@ static ssize_t octa_id_show(struct device *dev,
 	struct device_attribute *attr, char *buf)
 {
 	struct panel_private *priv = dev_get_drvdata(dev);
-	int site, rework, poc, max_brightness;
+	int site, rework, poc;
 	char cell_id[16];
 	int i;
 	unsigned char* octa_id;
@@ -1227,10 +1236,9 @@ static ssize_t octa_id_show(struct device *dev,
 	site >>= 4;
 	rework = octa_id[0] & 0x0f;
 	poc = octa_id[1] & 0x0f;
-	max_brightness = octa_id[2] * 256 + octa_id[3];
 
-	dsim_info("site (%d), rework (%d), poc (%d), max_brightness (%d)\n",
-			site, rework, poc, max_brightness);
+	dsim_info("site (%d), rework (%d), poc (%d)\n",
+			site, rework, poc);
 
 	dsim_info("<CELL ID>\n");
 	for(i = 0; i < 16; i++) {
@@ -1238,8 +1246,8 @@ static ssize_t octa_id_show(struct device *dev,
 		dsim_info("%x -> %c\n",octa_id[i+4], cell_id[i]);
 	}
 
-	sprintf(buf, "%d%d%d%04d%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c\n",
-		site, rework, poc, max_brightness,
+	sprintf(buf, "%d%d%d%02x%02x%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c\n",
+		site, rework, poc, octa_id[2], octa_id[3],
 		cell_id[0], cell_id[1], cell_id[2], cell_id[3],
 		cell_id[4], cell_id[5], cell_id[6], cell_id[7],
 		cell_id[8], cell_id[9], cell_id[10], cell_id[11],

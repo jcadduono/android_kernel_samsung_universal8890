@@ -41,7 +41,7 @@
 #include <asm/smp_plat.h>
 #include <asm/cputype.h>
 
-#if defined(CONFIG_SEC_PM) && defined(CONFIG_MUIC_NOTIFIER)
+#if defined(CONFIG_SEC_PM) && defined(CONFIG_MUIC_NOTIFIER) && !defined(CONFIG_MUIC_SUPPORT_CCIC)
 #include <linux/muic/muic.h>
 #include <linux/muic/muic_notifier.h>
 #endif
@@ -116,7 +116,7 @@ static struct pm_qos_request core_max_qos_real[CL_END];
 static struct pm_qos_request exynos_mif_qos[CL_END];
 static struct pm_qos_request ipa_max_qos[CL_END];
 static struct pm_qos_request reboot_max_qos[CL_END];
-#ifdef CONFIG_SEC_PM
+#if defined(CONFIG_SEC_PM) && defined(CONFIG_MUIC_NOTIFIER) && !defined(CONFIG_MUIC_SUPPORT_CCIC)
 static struct pm_qos_request jig_boot_max_qos[CL_END];
 #endif
 
@@ -2467,7 +2467,7 @@ static int exynos_mp_cpufreq_parse_dt(struct device_node *np, cluster_type cl)
 			return -ENODEV;
 		if (of_property_read_u32(np, "cl1_reboot_limit_freq", &ptr->reboot_limit_freq))
 			return -ENODEV;
-#ifdef CONFIG_SEC_PM
+#if defined(CONFIG_SEC_PM) && defined(CONFIG_MUIC_NOTIFIER) && !defined(CONFIG_MUIC_SUPPORT_CCIC)
 		if (of_property_read_u32(np, "cl1_jig_boot_max_qos", &ptr->jig_boot_cpu_max_qos))
 			return -ENODEV;
 #endif
@@ -2745,9 +2745,7 @@ device_initcall(exynos_mp_cpufreq_init);
 late_initcall(exynos_mp_cpufreq_init);
 #endif
 
-#if defined(CONFIG_SEC_PM) && defined(CONFIG_MUIC_NOTIFIER)
-
-#ifndef CONFIG_MUIC_SUPPORT_CCIC
+#if defined(CONFIG_SEC_PM) && defined(CONFIG_MUIC_NOTIFIER) && !defined(CONFIG_MUIC_SUPPORT_CCIC)
 static struct notifier_block cpufreq_muic_nb;
 static bool jig_is_attached;
 
@@ -2774,7 +2772,6 @@ static int exynos_cpufreq_muic_notifier(struct notifier_block *nb,
 
 	return NOTIFY_DONE;
 }
-#endif
 
 static int __init exynos_cpufreq_late_init(void)
 {
@@ -2815,7 +2812,7 @@ static int __init exynos_cpufreq_late_init(void)
 }
 
 late_initcall(exynos_cpufreq_late_init);
-#endif /* CONFIG_SEC_PM && CONFIG_MUIC_NOTIFIER */
+#endif /* CONFIG_SEC_PM && CONFIG_MUIC_NOTIFIER && CONFIG_MUIC_SUPPORT_CCIC is not defined */
 
 static void __exit exynos_mp_cpufreq_exit(void)
 {
