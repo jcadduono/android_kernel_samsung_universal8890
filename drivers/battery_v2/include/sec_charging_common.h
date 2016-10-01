@@ -43,6 +43,7 @@ enum power_supply_ext_property {
 	POWER_SUPPLY_EXT_PROP_WIRELESS_TX_VAL,
 	POWER_SUPPLY_EXT_PROP_AICL_CURRENT,
 	POWER_SUPPLY_EXT_PROP_CHECK_MULTI_CHARGE,
+	POWER_SUPPLY_EXT_PROP_DESIGNCAP_CORRUPT,
 };
 
 enum sec_battery_voltage_mode {
@@ -72,6 +73,8 @@ enum sec_battery_capacity_mode {
 	SEC_BATTERY_CAPACITY_AGEDCELL,
 	/* charge count */
 	SEC_BATTERY_CAPACITY_CYCLE,
+	/* full capacity rep */
+	SEC_BATTERY_CAPACITY_FULL,
 };
 
 enum sec_wireless_info_mode {

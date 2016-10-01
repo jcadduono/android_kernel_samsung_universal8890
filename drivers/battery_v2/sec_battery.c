@@ -149,6 +149,18 @@ static struct device_attribute sec_battery_attrs[] = {
 	SEC_BATTERY_ATTR(batt_wdt_control),
 	SEC_BATTERY_ATTR(mode),
 	SEC_BATTERY_ATTR(check_ps_ready),
+
+	SEC_BATTERY_ATTR(cisd_onoff),
+	SEC_BATTERY_ATTR(cisd_info_value),
+	SEC_BATTERY_ATTR(cisd_diff_value),
+	SEC_BATTERY_ATTR(cisd_result),
+	SEC_BATTERY_ATTR(cisd_count_cap),
+	SEC_BATTERY_ATTR(cisd_count_soc),
+	SEC_BATTERY_ATTR(cisd_fullcaprep_max),
+	SEC_BATTERY_ATTR(cisd_remcap),
+	SEC_BATTERY_ATTR(cisd_chg_onoff),
+	SEC_BATTERY_ATTR(cisd_chg_limit),
+	SEC_BATTERY_ATTR(designcap_corrupt),
 };
 
 static enum power_supply_property sec_battery_props[] = {
@@ -227,6 +239,10 @@ char *sec_bat_health_str[] = {
 	"OverheatLimit"
 };
 
+static void sec_bat_get_battery_info(
+				struct sec_battery_info *battery);
+static void sec_bat_set_charging_status(struct sec_battery_info *battery,
+		int status);
 static void sec_bat_set_misc_event(struct sec_battery_info *battery,
 	const int misc_event_type, bool do_clear) {
 
@@ -512,15 +528,20 @@ static int sec_bat_check_afc_temp(struct sec_battery_info *battery, int input_cu
 			case POWER_SUPPLY_TYPE_HV_QC20:
 				if (!battery->chg_limit && battery->chg_temp > battery->pdata->chg_high_temp) {
 					/* vbus level : 9V --> 5V */
+					battery->chg_limit_recovery_cable = battery->cable_type;
 					muic_afc_set_voltage(SEC_INPUT_VOLTAGE_5V);
 					battery->chg_limit = true;
 				}
 				break;
 			case POWER_SUPPLY_TYPE_HV_MAINS_CHG_LIMIT:
-				if (battery->chg_limit && battery->chg_temp < battery->pdata->chg_high_temp_recovery) {
+				if (battery->chg_limit && ((battery->chg_temp < battery->pdata->chg_high_temp_recovery) || battery->vbus_chg_by_siop)) {
 					/* vbus level : 5V --> 9V */
-					muic_afc_set_voltage(SEC_INPUT_VOLTAGE_9V);
-					battery->chg_limit = false;
+					if (battery->chg_limit_recovery_cable == POWER_SUPPLY_TYPE_HV_MAINS_12V) {
+						muic_afc_set_voltage(SEC_INPUT_VOLTAGE_12V);
+					} else {
+						muic_afc_set_voltage(SEC_INPUT_VOLTAGE_9V);
+					}
+					battery->chg_limit = battery->vbus_chg_by_siop = false;
 					input_current = battery->pdata->pre_afc_input_current;
 					/* set current event */
 					sec_bat_set_current_event(battery, SEC_BAT_CURRENT_EVENT_AFC, 0);
@@ -530,6 +551,7 @@ static int sec_bat_check_afc_temp(struct sec_battery_info *battery, int input_cu
 			case POWER_SUPPLY_TYPE_HV_QC30:
 				if (!battery->chg_limit && battery->chg_temp > battery->pdata->chg_12v_high_temp) {
 					/* vbus level : 12V --> 5V */
+					battery->chg_limit_recovery_cable = POWER_SUPPLY_TYPE_HV_MAINS;
 					muic_afc_set_voltage(SEC_INPUT_VOLTAGE_5V);
 					battery->chg_limit = true;
 				}
@@ -538,6 +560,14 @@ static int sec_bat_check_afc_temp(struct sec_battery_info *battery, int input_cu
 		}
 #endif
 		pr_info("%s: cable_type(%d), chg_limit(%d)\n", __func__, battery->cable_type, battery->chg_limit);
+#if defined(CONFIG_MUIC_HV) || defined(CONFIG_SUPPORT_QC30)
+	} else if (!battery->chg_limit && is_hv_wire_type(battery->cable_type) && (battery->cable_type != POWER_SUPPLY_TYPE_HV_QC30)) {
+			battery->chg_limit_recovery_cable = battery->cable_type;
+				/* vbus level : 9V --> 5V */
+			muic_afc_set_voltage(SEC_INPUT_VOLTAGE_5V);
+			battery->chg_limit = battery->vbus_chg_by_siop = true;
+			pr_info("%s: vbus set 5V by siop(recovery cable: %d)\n", __func__,battery->chg_limit_recovery_cable);
+#endif
 	}
 
 	return input_current;
@@ -684,9 +714,12 @@ static int sec_bat_set_charging_current(struct sec_battery_info *battery)
 				}
 
 				input_current = sec_bat_check_afc_input_current(battery, input_current);
-				pr_info("%s: keep charging current(capacity=%d, tc=%d)\n",
-					__func__, battery->capacity, battery->threshold_capacity);
-				goto set_charging_current;
+				/* In case vbus was set 5V, check afc */
+				if (battery->siop_level != 100 || !battery->chg_limit) {
+					pr_info("%s: keep charging current(capacity=%d, tc=%d)\n",
+						__func__, battery->capacity, battery->threshold_capacity);
+					goto set_charging_current;
+				}
 			}
 		}
 
@@ -1094,6 +1127,192 @@ static bool sec_bat_check(struct sec_battery_info *battery)
 	return ret;
 }
 
+/* cell internal short detection */
+static bool sec_bat_cisd_soc_drop_check(struct sec_battery_info *battery)
+{
+	struct cisd *pcisd = &battery->cisd;
+	unsigned int store_index = pcisd->socdrop_store_index,
+		read_index = pcisd->socdrop_read_index,
+		now_index = 0;
+	struct timespec now_ts;
+	bool ret = false;
+
+	if (!store_index && !read_index) {
+		/* update new soc, time */
+		now_ts = ktime_to_timespec(ktime_get_boottime());
+		pcisd->socdrop_info[store_index].soc = battery->capacity;
+		pcisd->socdrop_info[store_index].time = (unsigned long)now_ts.tv_sec;
+
+		pcisd->socdrop_store_index = store_index + 1;
+		return ret;
+	}
+
+	now_index = (store_index == 0) ? (CISD_SOCDROP_MAXSIZE - 1) : (store_index - 1);
+	if (pcisd->socdrop_info[now_index].soc > battery->capacity) {
+		/* update new soc, time */
+		now_ts = ktime_to_timespec(ktime_get_boottime());
+		pcisd->socdrop_info[store_index].soc = battery->capacity;
+		pcisd->socdrop_info[store_index].time = (unsigned long)now_ts.tv_sec;
+
+		pr_info("read_data(idx:%d, soc:%d, time:%ld), store_data(idx:%d, soc:%d, time:%ld)\n",
+			read_index, pcisd->socdrop_info[read_index].soc, pcisd->socdrop_info[read_index].time,
+			store_index, pcisd->socdrop_info[store_index].soc, pcisd->socdrop_info[store_index].time);
+
+		/* check soc drop */
+		while (store_index != read_index) {
+			int diff_soc =
+					pcisd->socdrop_info[read_index].soc - pcisd->socdrop_info[store_index].soc;
+
+			if (diff_soc >= pcisd->diff_soc) {
+				unsigned int diff_time =
+					(unsigned int)(pcisd->socdrop_info[store_index].time - pcisd->socdrop_info[read_index].time);
+
+				/* read_index ++ */
+				read_index = (read_index >= (CISD_SOCDROP_MAXSIZE - 1)) ?
+						0 : (read_index + 1);
+
+				if (diff_time <= pcisd->diff_time) {
+					ret = true;
+					break;
+				}
+			} else
+				break;
+		}
+		pcisd->socdrop_store_index =
+			(store_index >= (CISD_SOCDROP_MAXSIZE - 1)) ? 0 : (store_index + 1);
+		pcisd->socdrop_read_index = read_index;
+	}
+	return ret;
+}
+
+static bool sec_bat_cisd_check(struct sec_battery_info *battery)
+{
+	struct cisd *pcisd = &battery->cisd;
+	bool ret = false;
+	union power_supply_propval capfull_val;
+
+	if (battery->factory_mode || battery->is_jig_on) {
+		dev_dbg(battery->dev, "%s: No need to check in factory mode\n",
+			__func__);
+		return ret;
+	} else if (!pcisd->onoff_flag) {
+		dev_info(battery->dev, "%s: cisd off.\n", __func__);
+		pcisd->state = CISD_STATE_NONE;
+		pcisd->socdrop_store_index = 0;
+		pcisd->socdrop_read_index = 0;
+		return ret;
+	}
+
+	/* update curr_cap_max */
+	capfull_val.intval = SEC_BATTERY_CAPACITY_FULL;
+	psy_do_property(battery->pdata->fuelgauge_name, get,
+			POWER_SUPPLY_PROP_ENERGY_NOW, capfull_val);
+
+	if (capfull_val.intval >= 4500 && battery->cisd_chg_limit_enable && battery->cisd.chg_limit > 0) {
+		union power_supply_propval value;
+		battery->cisd.over_fullcap = true;
+		dev_info(battery->dev, "%s: cisd reset(%d).\n", __func__, capfull_val.intval);
+		sec_bat_set_charging_status(battery,
+				POWER_SUPPLY_STATUS_DISCHARGING);
+		sec_bat_set_charge(battery, SEC_BAT_CHG_MODE_CHARGING_OFF);
+		value.intval =
+			SEC_FUELGAUGE_CAPACITY_TYPE_RESET;
+		psy_do_property(battery->pdata->fuelgauge_name, set,
+				POWER_SUPPLY_PROP_CAPACITY, value);
+		psy_do_property(battery->pdata->fuelgauge_name, set,
+				POWER_SUPPLY_EXT_PROP_DESIGNCAP_CORRUPT, value);
+		sec_bat_get_battery_info(battery);
+	}
+
+	if ((battery->status == POWER_SUPPLY_STATUS_CHARGING) ||
+		(battery->status == POWER_SUPPLY_STATUS_FULL)) {
+		/* charging */
+		union power_supply_propval capcurr_val;
+
+		/* clear soc drop flag */
+		pcisd->state &= ~CISD_STATE_SOC_DROP;
+		pcisd->socdrop_store_index = 0;
+		pcisd->socdrop_read_index = 0;
+
+		capcurr_val.intval = SEC_BATTERY_CAPACITY_CURRENT;
+		psy_do_property(battery->pdata->fuelgauge_name, get,
+			POWER_SUPPLY_PROP_ENERGY_NOW, capcurr_val);
+
+		if ((capcurr_val.intval >= pcisd->curr_cap_max) &&
+			!(pcisd->state & CISD_STATE_CAP_OVERFLOW)) {
+			pcisd->count_cap = (capcurr_val.intval < pcisd->err_cap_max_thrs) ?
+				pcisd->count_cap : (pcisd->count_cap + 1);
+			pcisd->state |= CISD_STATE_CAP_OVERFLOW;
+			ret = true;
+		} else if ((pcisd->state & CISD_STATE_CAP_OVERFLOW) &&
+			(pcisd->curr_cap_max < pcisd->err_cap_max_thrs) &&
+			(capcurr_val.intval >= pcisd->err_cap_max_thrs)) {
+			pcisd->curr_cap_max = capcurr_val.intval;
+			pcisd->count_cap++;
+		}
+	} else  {
+		/* discharging */
+		if (pcisd->state & CISD_STATE_CAP_OVERFLOW) {
+			/* clear cap overflow flag */
+			pcisd->state &= ~CISD_STATE_CAP_OVERFLOW;
+			pcisd->curr_cap_max = capfull_val.intval;
+		}
+
+		if ((battery->capacity < pcisd->check_soc_min) ||
+			(battery->temperature < pcisd->check_temp_min)) {
+			/* clear soc drop flag */
+			if (pcisd->state & CISD_STATE_SOC_DROP) {
+				pcisd->state &= ~CISD_STATE_SOC_DROP;
+			}
+			pcisd->socdrop_store_index = 0;
+			pcisd->socdrop_read_index = 0;
+		} else if (!(pcisd->state & CISD_STATE_SOC_DROP) &&
+			sec_bat_cisd_soc_drop_check(battery)) {
+			pcisd->state |= CISD_STATE_SOC_DROP;
+			pcisd->count_soc++;
+			ret = true;
+		}
+	}
+
+	pr_info("cisd - oo:%d, ct:%d/%d, stt:%d, cp:%d/%d, sm:%d, tm:%d, si:%d, ri:%d\n",
+		pcisd->onoff_flag, pcisd->count_cap, pcisd->count_soc, pcisd->state,
+		pcisd->curr_cap_max, pcisd->err_cap_max_thrs, pcisd->check_soc_min, pcisd->check_temp_min,
+		pcisd->socdrop_store_index, pcisd->socdrop_read_index);
+
+	return ret;
+}
+
+static void sec_bat_cisd_data_read(struct sec_battery_info *battery)
+{
+	struct cisd *pcisd = &battery->cisd;
+	union power_supply_propval cap_val, volt_now_val, volt_avg_val;
+
+	cap_val.intval = SEC_BATTERY_CAPACITY_CURRENT;
+	psy_do_property(battery->pdata->fuelgauge_name, get,
+		POWER_SUPPLY_PROP_ENERGY_NOW, cap_val);
+
+	psy_do_property(battery->pdata->fuelgauge_name, get,
+		POWER_SUPPLY_PROP_VOLTAGE_NOW, volt_now_val);
+
+	volt_avg_val.intval = SEC_BATTERY_VOLTAGE_AVERAGE;
+	psy_do_property(battery->pdata->fuelgauge_name, get,
+		POWER_SUPPLY_PROP_VOLTAGE_AVG, volt_avg_val);
+
+	pcisd->info_old.voltage_now = pcisd->info_new.voltage_now;
+	pcisd->info_old.voltage_avg = pcisd->info_new.voltage_avg;
+	pcisd->info_old.capacity_now = pcisd->info_new.capacity_now;
+
+	pcisd->info_new.voltage_now = volt_now_val.intval;
+	pcisd->info_new.voltage_avg = volt_avg_val.intval;
+	pcisd->info_new.capacity_now = cap_val.intval;
+
+	pr_info("%s: update cisd data(capacity: %d --> %d, voltage_now: %d --> %d, voltage_avg: %d --> %d)\n",
+		__func__,
+		pcisd->info_old.capacity_now, pcisd->info_new.capacity_now,
+		pcisd->info_old.voltage_now, pcisd->info_new.voltage_now,
+		pcisd->info_old.voltage_avg, pcisd->info_new.voltage_avg);
+}
+
 static bool sec_bat_get_cable_type(
 			struct sec_battery_info *battery,
 			int cable_source_type)
@@ -1150,16 +1369,18 @@ static void sec_bat_set_charging_status(struct sec_battery_info *battery,
 	switch (status) {
 		case POWER_SUPPLY_STATUS_NOT_CHARGING:
 		case POWER_SUPPLY_STATUS_DISCHARGING:
-			if (battery->status == POWER_SUPPLY_STATUS_FULL ||
-				battery->capacity == 100) {
-				value.intval = 100;
-				psy_do_property(battery->pdata->fuelgauge_name, set,
-						POWER_SUPPLY_PROP_CHARGE_FULL, value);
-				/* To get SOC value (NOT raw SOC), need to reset value */
-				value.intval = 0;
-				psy_do_property(battery->pdata->fuelgauge_name, get,
-						POWER_SUPPLY_PROP_CAPACITY, value);
-				battery->capacity = value.intval;
+			if (!battery->cisd.charging_disabled && !battery->store_mode) {
+				if (battery->status == POWER_SUPPLY_STATUS_FULL ||
+						battery->capacity == 100) {
+					value.intval = 100;
+					psy_do_property(battery->pdata->fuelgauge_name, set,
+							POWER_SUPPLY_PROP_CHARGE_FULL, value);
+					/* To get SOC value (NOT raw SOC), need to reset value */
+					value.intval = 0;
+					psy_do_property(battery->pdata->fuelgauge_name, get,
+							POWER_SUPPLY_PROP_CAPACITY, value);
+					battery->capacity = value.intval;
+				}
 			}
 			break;
 		case POWER_SUPPLY_STATUS_FULL:
@@ -3413,6 +3634,8 @@ static void sec_bat_monitor_work(
 					battery->capacity = value.intval;
 
 					sec_bat_get_temperature_info(battery);
+
+					sec_bat_cisd_check(battery);
 					power_supply_changed(&battery->psy_bat);
 					pr_info("Skip monitor work(%ld, Vnow:%d(mV), SoC:%d(%%), Tbat:%d(0.1'C))\n",
 						c_ts.tv_sec - old_ts.tv_sec, battery->voltage_now, battery->capacity, battery->temperature);
@@ -3425,6 +3648,7 @@ static void sec_bat_monitor_work(
 	old_ts = c_ts;
 
 	sec_bat_get_battery_info(battery);
+	sec_bat_cisd_check(battery);
 
 #if defined(CONFIG_STEP_CHARGING)
 	sec_bat_check_step_charging(battery);
@@ -3496,8 +3720,40 @@ continue_monitor:
 	sec_bat_set_charging_current(battery);
 
 skip_current_monitor:
+	if (battery->cisd_chg_limit_enable && battery->cisd.chg_limit > 0 && !battery->store_mode) {
+		dev_info(battery->dev,
+				"%s: @cisd capacity = (%d), status= (%d), chg_limit(%d), of(%d)\n",
+				__func__, battery->capacity, battery->status, battery->cisd.chg_limit,
+				battery->cisd.over_fullcap);
+		if ((battery->capacity >= battery->cisd.chg_limit) &&
+			(battery->status == POWER_SUPPLY_STATUS_CHARGING)) {
+			battery->cisd.charging_disabled = true;
+			sec_bat_set_charging_status(battery,
+					POWER_SUPPLY_STATUS_DISCHARGING);
+			sec_bat_set_charge(battery, SEC_BAT_CHG_MODE_CHARGING_OFF);
+		}
+		if ((battery->cisd.charging_disabled) &&
+			(battery->status == POWER_SUPPLY_STATUS_DISCHARGING)) {
+			int charging_start_soc;
+
+			if (battery->cisd.over_fullcap) {
+				charging_start_soc = CISD_CHARGING_MAX;
+			} else {
+				charging_start_soc = battery->cisd.chg_limit - 5;
+			}
+
+			if (battery->capacity <= charging_start_soc) {
+				battery->cisd.charging_disabled = false;
+				battery->cisd.over_fullcap = false;
+				sec_bat_set_charging_status(battery,
+						POWER_SUPPLY_STATUS_CHARGING);
+				sec_bat_set_charge(battery, SEC_BAT_CHG_MODE_CHARGING);
+			}
+		}
+	}
+	
 	dev_info(battery->dev,
-		 "%s: Status(%s), mode(%s), Health(%s), Cable(%d, %d, %d, %d), level(%d%%)"
+		 "%s: Status(%s), mode(%s), Health(%s), Cable(%d, %d, %d, %d), level(%d%%), cisd.cd(%d)"
 #if defined(CONFIG_AFC_CHARGER_MODE)
 		", HV(%s), sleep_mode(%d)"
 #endif
@@ -3510,7 +3766,7 @@ skip_current_monitor:
 		 sec_bat_health_str[battery->health],
 		 battery->cable_type, battery->wire_status,
 		 battery->muic_cable_type, battery->pd_usb_attached,
-		 battery->siop_level
+		 battery->siop_level, battery->cisd.charging_disabled
 #if defined(CONFIG_AFC_CHARGER_MODE)
 		, battery->hv_chg_name, sleep_mode
 #endif
@@ -3528,16 +3784,20 @@ skip_current_monitor:
 		dev_info(battery->dev,
 			"%s: wpc_en pin value is (%d)\n", __func__, gpio_get_value(battery->pdata->wpc_en));
 	}
+
 #if defined(CONFIG_SEC_FACTORY)
 	if ((battery->cable_type != POWER_SUPPLY_TYPE_BATTERY) && (battery->cable_type != POWER_SUPPLY_TYPE_OTG)) {
 #else
-	if (battery->store_mode && battery->cable_type != POWER_SUPPLY_TYPE_BATTERY) {
+	if (battery->store_mode) {
 #endif
 		dev_info(battery->dev,
-			"%s: @battery->capacity = (%d), battery->status= (%d), battery->store_mode=(%d)\n",
-			__func__, battery->capacity, battery->status, battery->store_mode);
-
-		if ((battery->capacity >= STORE_MODE_CHARGING_MAX) && (battery->status == POWER_SUPPLY_STATUS_CHARGING)) {
+				"%s: @battery->capacity = (%d), battery->status= (%d), battery->store_mode=(%d)\n",
+				__func__, battery->capacity, battery->status, battery->store_mode);
+		if (battery->capacity > STORE_MODE_CHARGING_MAX) {
+			sec_bat_set_charging_status(battery,
+					POWER_SUPPLY_STATUS_DISCHARGING);
+			sec_bat_set_charge(battery, SEC_BAT_CHG_MODE_BUCK_OFF);
+		} else if (battery->capacity == STORE_MODE_CHARGING_MAX) {
 			sec_bat_set_charging_status(battery,
 					POWER_SUPPLY_STATUS_DISCHARGING);
 			sec_bat_set_charge(battery, SEC_BAT_CHG_MODE_CHARGING_OFF);
@@ -3585,6 +3845,62 @@ static enum alarmtimer_restart sec_bat_alarm(
 	return ALARMTIMER_NORESTART;
 }
 
+static void sec_bat_cisd_work(struct work_struct *work)
+{
+	struct sec_battery_info *battery = container_of(work,
+		struct sec_battery_info, cisd.work.work);
+	struct cisd *pcisd = &battery->cisd;
+	int diff_voltage, diff_capacity;
+
+	pr_info("%s: start!!!\n", __func__);
+	sec_bat_cisd_data_read(battery);
+
+	diff_voltage = pcisd->info_old.voltage_now - pcisd->info_new.voltage_now;
+	diff_capacity = pcisd->info_old.capacity_now- pcisd->info_new.capacity_now;
+	pr_info("%s: data check voltage(%d), capacity(%d)\n",
+		__func__, diff_voltage, diff_capacity);
+
+	if ((pcisd->info_new.voltage_now > pcisd->check_volt_min) &&
+		(diff_voltage > pcisd->diff_volt_now) && (diff_capacity < pcisd->diff_cap_now)) {
+		pr_info("%s: detected cell internal short by volt drop!!\n", __func__);
+		sec_bat_set_misc_event(battery, BATT_MISC_EVENT_CISD, 0); /* cisd set */
+		pcisd->state |= CISD_STATE_VOLT_DROP;
+		//pcisd->count ++;
+
+		pcisd->result_info.capacity_now = pcisd->info_new.capacity_now;
+		pcisd->result_info.voltage_now = pcisd->info_new.voltage_now;
+		pcisd->result_info.voltage_avg = pcisd->info_new.voltage_avg;
+	}
+
+	alarm_start(&battery->cisd.alarm,
+		ktime_add(ktime_get_boottime(), ktime_set(battery->cisd.delay_time, 0)));
+
+	wake_unlock(&battery->cisd.wake_lock);
+}
+
+static enum alarmtimer_restart sec_bat_cisd_alarm(
+		struct alarm *alarm, ktime_t now)
+{
+	struct sec_battery_info *battery = container_of(alarm,
+			struct sec_battery_info, cisd.alarm);
+
+	dev_info(battery->dev,
+			"%s\n", __func__);
+
+	/* In wake up, monitor work will be queued in complete function
+	 * To avoid duplicated queuing of monitor work,
+	 * do NOT queue monitor work in wake up by polling alarm
+	 */
+	if ((battery->cisd.onoff_flag) &&
+		(battery->status == POWER_SUPPLY_STATUS_DISCHARGING) &&
+		(battery->siop_level >= 100)) {
+		wake_lock(&battery->cisd.wake_lock);
+		queue_delayed_work(battery->monitor_wqueue, &battery->cisd.work, msecs_to_jiffies(100));
+	}
+
+	return ALARMTIMER_NORESTART;
+}
+
 static void sec_bat_check_input_voltage(struct sec_battery_info *battery)
 {
 	unsigned int voltage;
@@ -3619,7 +3935,7 @@ static void sec_bat_cable_work(struct work_struct *work)
 	struct sec_battery_info *battery = container_of(work,
 				struct sec_battery_info, cable_work.work);
 	union power_supply_propval val;
-	int current_cable_type;
+	int current_cable_type, prev_cable_type;
 
 	dev_info(battery->dev, "%s: Start\n", __func__);
 	sec_bat_set_current_event(battery, SEC_BAT_CURRENT_EVENT_SKIP_HEATING_CONTROL, 0);
@@ -3691,6 +4007,7 @@ static void sec_bat_cable_work(struct work_struct *work)
 		/* Do NOT activate cable work for NOT changed */
 		goto end_of_cable_work;
 	}
+	battery->cisd.charging_disabled = false;
 
 #if defined(CONFIG_BATTERY_SWELLING)
 	if ((current_cable_type == POWER_SUPPLY_TYPE_BATTERY) ||
@@ -3707,9 +4024,11 @@ static void sec_bat_cable_work(struct work_struct *work)
 	}
 #endif
 
+	prev_cable_type = battery->cable_type;
 	battery->cable_type = current_cable_type;
 #if defined(CONFIG_CALC_TIME_TO_FULL)
-	battery->complete_timetofull = false;
+	if ((prev_cable_type != POWER_SUPPLY_TYPE_HV_MAINS_CHG_LIMIT) && (battery->cable_type != POWER_SUPPLY_TYPE_HV_MAINS_CHG_LIMIT))
+		battery->complete_timetofull = false;
 #endif
 	battery->wpc_vout_level = WIRELESS_VOUT_9V;
 	if (is_wireless_type(battery->cable_type)) {
@@ -3736,6 +4055,7 @@ static void sec_bat_cable_work(struct work_struct *work)
 		SEC_BATTERY_CABLE_CHECK_NOINCOMPATIBLECHARGE) &&
 		battery->cable_type == POWER_SUPPLY_TYPE_UNKNOWN)) {
 		battery->charging_mode = SEC_BATTERY_CHARGING_NONE;
+		battery->vbus_chg_by_siop = false;
 		battery->is_recharging = false;
 		battery->input_voltage = 0;
 		battery->charge_power = 0;
@@ -3813,7 +4133,6 @@ static void sec_bat_cable_work(struct work_struct *work)
 		}
 
 #if defined(CONFIG_CALC_TIME_TO_FULL)
-		battery->complete_timetofull = false;
 		queue_delayed_work(battery->monitor_wqueue, &battery->timetofull_work,
 					msecs_to_jiffies(7000));
 #endif
@@ -4597,6 +4916,66 @@ ssize_t sec_bat_show_attrs(struct device *dev,
 		pr_info("%s : CHECK_PS_READY=%d\n",__func__,value.intval);
 #endif
 		break;
+	case CISD_ONOFF:
+		i += scnprintf(buf + i, PAGE_SIZE - i, "%d\n",
+				battery->cisd.onoff_flag);
+		break;
+	case CISD_INFO_VALUE:
+		break;
+	case CISD_DIFF_VALUE:
+		i += scnprintf(buf + i, PAGE_SIZE - i,
+				"%d %d %d %d %d %d\n",
+				battery->cisd.curr_cap_max,
+				battery->cisd.diff_soc,
+				battery->cisd.diff_time,
+				battery->cisd.check_temp_min,
+				battery->cisd.check_soc_min,
+				battery->cisd.check_volt_min);
+		break;
+	case CISD_RESULT:
+		i += scnprintf(buf + i, PAGE_SIZE - i, "%d\n",
+				battery->cisd.state);
+		break;
+	case CISD_COUNT_CAP:
+		i += scnprintf(buf + i, PAGE_SIZE - i, "%d\n",
+				battery->cisd.count_cap);
+		break;
+	case CISD_COUNT_SOC:
+		i += scnprintf(buf + i, PAGE_SIZE - i, "%d\n",
+				battery->cisd.count_soc);
+		break;
+	case CISD_FULLCAPREP_MAX:
+		{
+			union power_supply_propval fullcaprep_val;
+			
+			fullcaprep_val.intval = SEC_BATTERY_CAPACITY_FULL;
+			psy_do_property(battery->pdata->fuelgauge_name, get,
+				POWER_SUPPLY_PROP_ENERGY_NOW, fullcaprep_val);
+
+			i += scnprintf(buf + i, PAGE_SIZE - i, "%d\n",
+					fullcaprep_val.intval);
+		}
+		break;
+	case CISD_REMCAP:
+		{
+			union power_supply_propval remcap_val;
+			
+			remcap_val.intval = SEC_BATTERY_CAPACITY_CURRENT;
+			psy_do_property(battery->pdata->fuelgauge_name, get,
+				POWER_SUPPLY_PROP_ENERGY_NOW, remcap_val);
+
+			i += scnprintf(buf + i, PAGE_SIZE - i, "%d\n",
+					remcap_val.intval);
+		}
+		break;
+	case CISD_CHG_ONOFF:
+		i += scnprintf(buf + i, PAGE_SIZE - i, "%d\n",
+				battery->cisd.chg_onoff_flag);
+		break;
+	case CISD_CHG_LIMIT:
+		i += scnprintf(buf + i, PAGE_SIZE - i, "%d\n",
+				battery->cisd.chg_limit);
+		break;
 	default:
 		i = -EINVAL;
 		break;
@@ -4630,6 +5009,7 @@ ssize_t sec_bat_store_attrs(
 	int ret = -EINVAL;
 	int x = 0;
 	int t[12];
+	int cisd_thr[8];
 	int i = 0;
 
 	switch (offset) {
@@ -4739,6 +5119,22 @@ ssize_t sec_bat_store_attrs(
 			} else {
 				battery->siop_level = 100;
 			}
+
+#if 0
+			if (battery->cisd.onoff_flag) {
+				if ((battery->siop_level == 100) &&
+					(battery->status == POWER_SUPPLY_STATUS_DISCHARGING) &&
+					(!battery->cisd.is_alarm_running)) {
+					alarm_start(&battery->cisd.alarm,
+						ktime_add(ktime_get_boottime(), ktime_set(battery->cisd.delay_time, 0)));
+					battery->cisd.is_alarm_running = true;
+					sec_bat_cisd_data_read(battery);
+				} else {
+					alarm_cancel(&battery->cisd.alarm);
+					battery->cisd.is_alarm_running = false;
+				}
+			}
+#endif
 
 			if (battery->siop_event == SIOP_EVENT_WPC_CALL_START ||
 				battery->siop_event == SIOP_EVENT_WPC_CALL_END)
@@ -5163,7 +5559,10 @@ ssize_t sec_bat_store_attrs(
 			dev_info(battery->dev,
 					"%s: HMT_TA_CHARGE(%d)\n", __func__, x);
 			sec_bat_set_current_event(battery, SEC_BAT_CURRENT_EVENT_CHARGE_DISABLE, x);
-			sec_bat_set_charge(battery, x? SEC_BAT_CHG_MODE_CHARGING:SEC_BAT_CHG_MODE_CHARGING_OFF);
+			if ((battery->status == POWER_SUPPLY_STATUS_CHARGING) ||
+				(battery->status == POWER_SUPPLY_STATUS_FULL)) {
+				sec_bat_set_charge(battery, x? SEC_BAT_CHG_MODE_CHARGING:SEC_BAT_CHG_MODE_CHARGING_OFF);
+			}
 			ret = count;
 #else
 			union power_supply_propval value;
@@ -5582,6 +5981,115 @@ ssize_t sec_bat_store_attrs(
 		break;
 	case CHECK_PS_READY:
 		break;
+	case CISD_ONOFF:
+		if (sscanf(buf, "%d\n", &x) == 1) {
+			pr_info("%s: update cisd onoff(%d)\n", __func__, x);
+			if (battery->use_cisd) {
+				battery->cisd.onoff_flag = !(!x);
+				if (!x) {
+					battery->cisd.state = CISD_STATE_NONE;
+					battery->cisd.socdrop_store_index = 0;
+					battery->cisd.socdrop_read_index = 0;
+				}
+			} else {
+				pr_info("%s: cisd not used\n", __func__);
+			}
+			ret = count;
+		}
+		break;
+	case CISD_INFO_VALUE:
+		break;
+	case CISD_DIFF_VALUE:
+		if (sscanf(buf, "%d %d %d %d %d %d\n",
+					&cisd_thr[0], &cisd_thr[1], &cisd_thr[2], &cisd_thr[3],
+					&cisd_thr[4], &cisd_thr[5]) == 6) {
+			battery->cisd.curr_cap_max = cisd_thr[0];
+			battery->cisd.diff_soc = cisd_thr[1];
+			battery->cisd.diff_time = cisd_thr[2];
+			battery->cisd.check_temp_min = cisd_thr[3];
+			battery->cisd.check_soc_min = cisd_thr[4];
+			battery->cisd.check_volt_min = cisd_thr[5];
+
+			battery->cisd.state = CISD_STATE_NONE;
+			battery->cisd.socdrop_store_index = 0;
+			battery->cisd.socdrop_read_index = 0;
+
+			pr_info("%s: Fullcap threshold : %d Diff SOC : %d Diff Time : %d Temp min : %d Soc min : %d Vol min : %d\n",
+					__func__,
+					battery->cisd.curr_cap_max,
+					battery->cisd.diff_soc,
+					battery->cisd.diff_time,
+					battery->cisd.check_temp_min,
+					battery->cisd.check_soc_min,
+					battery->cisd.check_volt_min);
+			ret = count;
+		}
+		break;
+	case CISD_RESULT:
+		break;
+	case CISD_COUNT_CAP:
+		if (sscanf(buf, "%d\n", &x) == 1) {
+			//pr_info("%s: update cisd count cap(%d)", __func__, x);
+			battery->cisd.count_cap = x;
+			ret = count;
+		}
+		break;
+	case CISD_COUNT_SOC:
+		if (sscanf(buf, "%d\n", &x) == 1) {
+			//pr_info("%s: update cisd count cap(%d)", __func__, x);
+			battery->cisd.count_soc = x;
+			ret = count;
+		}
+		break;
+	case CISD_FULLCAPREP_MAX:
+		if (sscanf(buf, "%d\n", &x) == 1) {
+			pr_info("%s: update fulcaprep(%d)\n", __func__, x);
+			if (x > battery->cisd.curr_cap_max) {
+				battery->cisd.curr_cap_max = x;
+			}
+			ret = count;
+
+			/* check cisd state */
+			if (battery->use_cisd)
+				battery->cisd.onoff_flag = 1; /* set cisd flag */
+			else 
+				pr_info("%s: cisd not used \n", __func__);
+			wake_lock(&battery->monitor_wake_lock);
+			queue_delayed_work(battery->monitor_wqueue, &battery->monitor_work, 0);
+		}
+		break;
+	case CISD_REMCAP:
+		break;
+	case CISD_CHG_ONOFF:
+		if (sscanf(buf, "%d\n", &x) == 1) {
+			pr_info("%s: update cisd chg onoff(%d)\n", __func__, x);
+			battery->cisd.chg_onoff_flag = !(!x);
+			ret = count;
+		}
+		break;
+	case CISD_CHG_LIMIT:
+		if (sscanf(buf, "%d\n", &x) == 1) {
+			pr_info("%s: update cisd chg_limit(%d)\n", __func__, x);
+			if (battery->use_cisd && battery->cisd_chg_limit_enable) {
+				battery->cisd.chg_limit = x;
+				wake_lock(&battery->monitor_wake_lock);
+				queue_delayed_work(battery->monitor_wqueue, &battery->monitor_work, 0);
+			} else {
+				pr_info("%s: cisd not used\n", __func__);
+			}
+			ret = count;
+		}
+		break;
+	case DESIGNCAP_CORRUPT:
+		if (sscanf(buf, "%d\n", &x) == 1) {
+			if (x == 1) {
+				union power_supply_propval value;
+				psy_do_property(battery->pdata->fuelgauge_name, set,
+					POWER_SUPPLY_EXT_PROP_DESIGNCAP_CORRUPT, value);
+			}
+		}
+		ret = count;	
+		break;
 	default:
 		ret = -EINVAL;
 	}
@@ -5903,7 +6411,7 @@ static int sec_bat_get_property(struct power_supply *psy,
 		break;
 #if defined(CONFIG_CALC_TIME_TO_FULL)
 	case POWER_SUPPLY_PROP_TIME_TO_FULL_NOW:
-		if (battery->capacity == 100) {
+		if (battery->capacity == 100 || (battery->cisd.chg_limit > 0 && battery->cisd_chg_limit_enable)) {
 			val->intval = -1;
 			break;
 		}
@@ -6795,6 +7303,16 @@ static int sec_bat_parse_dt(struct device *dev,
 		pr_info("%s: np NULL\n", __func__);
 		return 1;
 	}
+
+	battery->use_cisd = of_property_read_bool(np,"battery,use_cisd");
+	if (battery->use_cisd) {
+		battery->cisd_chg_limit_enable =
+			of_property_read_bool(np,"battery,cisd_chg_limit_enable");
+	} else {
+		battery->cisd_chg_limit_enable = false;
+	}
+	pr_info("%s: set cisd flag (%d/%d)\n",
+		__func__, battery->use_cisd, battery->cisd_chg_limit_enable);
 
 	ret = of_property_read_string(np,
 		"battery,vendor", (char const **)&pdata->vendor);
@@ -7917,6 +8435,46 @@ static void cable_initial_check(struct sec_battery_info *battery)
 }
 #endif
 
+static void sec_battery_cisd_init(struct sec_battery_info *battery)
+{
+	union power_supply_propval capfull_val;
+	
+	wake_lock_init(&battery->cisd.wake_lock, WAKE_LOCK_SUSPEND,
+			"sec-battery-cisd");
+	alarm_init(&battery->cisd.alarm, ALARM_BOOTTIME,
+			sec_bat_cisd_alarm);
+	INIT_DELAYED_WORK(&battery->cisd.work, sec_bat_cisd_work);
+
+	battery->cisd.chg_limit = 0;
+	battery->cisd.is_alarm_running = false;
+	battery->cisd.chg_onoff_flag = 1;
+	battery->cisd.onoff_flag = 0; /* default off */
+	battery->cisd.count_cap = 0;
+	battery->cisd.count_soc = 0;
+	battery->cisd.state = CISD_STATE_NONE;
+
+	battery->cisd.delay_time = 600; /* 10 min */
+	battery->cisd.diff_volt_now = 40;
+	battery->cisd.diff_cap_now = 5;
+
+	capfull_val.intval = SEC_BATTERY_CAPACITY_FULL;
+	psy_do_property(battery->pdata->fuelgauge_name, get,
+		POWER_SUPPLY_PROP_ENERGY_NOW, capfull_val);
+	battery->cisd.curr_cap_max = capfull_val.intval;
+	battery->cisd.err_cap_max_thrs = 4000;
+	battery->cisd.diff_soc = 15;
+	battery->cisd.diff_time = 600; /* 10 min */
+
+	battery->cisd.check_temp_min = 150; /* 15.0'C */
+	battery->cisd.check_soc_min = 20; /* 20 % */
+	battery->cisd.check_volt_min = 4000; /* 4.00V */
+}
+
+static void sec_battery_cisd_remove(struct sec_battery_info *battery)
+{
+	alarm_cancel(&battery->cisd.alarm);
+}
+
 static int sec_battery_probe(struct platform_device *pdev)
 {
 	sec_battery_platform_data_t *pdata = NULL;
@@ -8186,6 +8744,7 @@ static int sec_battery_probe(struct platform_device *pdev)
 	default:
 		break;
 	}
+	sec_battery_cisd_init(battery);
 
 	/* init power supplier framework */
 	ret = power_supply_register(&pdev->dev, &battery->psy_ps);
@@ -8245,6 +8804,7 @@ static int sec_battery_probe(struct platform_device *pdev)
 					POWER_SUPPLY_PROP_CHARGE_TYPE, value);
 
 #if defined(CONFIG_STORE_MODE) && !defined(CONFIG_SEC_FACTORY)
+	sec_bat_set_charge(battery, SEC_BAT_CHG_MODE_CHARGING_OFF);
 	battery->store_mode = true;
 #endif
 
@@ -8345,6 +8905,8 @@ static int __devexit sec_battery_remove(struct platform_device *pdev)
 #endif
 
 	dev_dbg(battery->dev, "%s: Start\n", __func__);
+
+	sec_battery_cisd_remove(battery);
 
 	switch (battery->pdata->polling_type) {
 	case SEC_BATTERY_MONITOR_WORKQUEUE:

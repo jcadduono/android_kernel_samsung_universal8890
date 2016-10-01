@@ -25,7 +25,7 @@
  *
  * <<Broadcom-WL-IPTag/Open:>>
  *
- * $Id: dhd_linux.c 647186 2016-07-04 09:17:19Z $
+ * $Id: dhd_linux.c 652895 2016-08-04 06:04:25Z $
  */
 
 #include <typedefs.h>
@@ -312,6 +312,14 @@ extern void dhd_pktfilter_offload_enable(dhd_pub_t * dhd, char *arg, int enable,
 extern void dhd_pktfilter_offload_delete(dhd_pub_t *dhd, int id);
 #endif
 
+#if defined(PKT_FILTER_SUPPORT) && defined(APF)
+static int __dhd_apf_add_filter(struct net_device *ndev, uint32 filter_id,
+       u8* program, uint32 program_len);
+static int __dhd_apf_config_filter(struct net_device *ndev, uint32 filter_id,
+       uint32 mode, uint32 enable);
+static int __dhd_apf_delete_filter(struct net_device *ndev, uint32 filter_id);
+#endif /* PKT_FILTER_SUPPORT && APF */
+
 #ifdef CUSTOMER_HW4
 #ifdef MIMO_ANT_SETTING
 extern int dhd_sel_ant_from_file(dhd_pub_t *dhd);
@@ -378,9 +386,13 @@ argos_mumimo_ctrl argos_mumimo_ctrl_data;
 
 #define RPS_TPUT_THRESHOLD			300
 #define DELAY_TO_CLEAR_RPS_CPUS			300
-#define SUMIMO_TO_MUMIMO_TPUT_THRESHOLD		100
+#define SUMIMO_TO_MUMIMO_TPUT_THRESHOLD		150
 #define MUMIMO_TO_SUMIMO_TPUT_THRESHOLD		200
 #endif /* ARGOS_RPS_CPU_CTL && ARGOS_CPU_SCHEDULER */
+
+#ifdef DYNAMIC_MUMIMO_CONTROL
+bool dhd_check_tx_eapol_m4(struct net_device *ndev, dhd_pub_t *dhdp, void *pkt);
+#endif /* DYNAMIC_MUMIMO_CONTROL */
 
 
 
@@ -540,7 +552,10 @@ typedef struct dhd_info {
 	 */
 	struct mutex dhd_net_if_mutex;
 	struct mutex dhd_suspend_mutex;
-#endif
+#if defined(PKT_FILTER_SUPPORT) && defined(APF)
+	struct mutex dhd_apf_mutex;
+#endif /* PKT_FILTER_SUPPORT && APF */
+#endif /* (LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 25)) && OEM_ANDROID */
 	spinlock_t wakelock_spinlock;
 	spinlock_t wakelock_evt_spinlock;
 	uint32 wakelock_counter;
@@ -1420,8 +1435,8 @@ static int dhd_toe_get(dhd_info_t *dhd, int idx, uint32 *toe_ol);
 static int dhd_toe_set(dhd_info_t *dhd, int idx, uint32 toe_ol);
 #endif /* TOE */
 
-static int dhd_wl_host_event(dhd_info_t *dhd, int *ifidx, void *pktdata, size_t pktlen,
-                             wl_event_msg_t *event_ptr, void **data_ptr);
+static int dhd_wl_host_event(dhd_info_t *dhd, int *ifidx, void *pktdata, uint16 pktlen,
+		wl_event_msg_t *event_ptr, void **data_ptr);
 
 #if defined(CONFIG_PM_SLEEP)
 static int dhd_pm_callback(struct notifier_block *nfb, unsigned long action, void *ignored)
@@ -2504,8 +2519,7 @@ dhd_enable_packet_filter(int value, dhd_pub_t *dhd)
 	/* 1 - Enable packet filter, only allow unicast packet to send up */
 	/* 0 - Disable packet filter */
 	if (dhd_pkt_filter_enable && (!value ||
-	    (dhd_support_sta_mode(dhd) && !dhd->dhcp_in_progress)))
-	    {
+	    (dhd_support_sta_mode(dhd) && !dhd->dhcp_in_progress))) {
 		for (i = 0; i < dhd->pktfilter_count; i++) {
 #ifndef GAN_LITE_NAT_KEEPALIVE_FILTER
 			if (value && (i == DHD_ARP_FILTER_NUM) &&
@@ -2519,6 +2533,13 @@ dhd_enable_packet_filter(int value, dhd_pub_t *dhd)
 			dhd_pktfilter_offload_enable(dhd, dhd->pktfilter[i],
 				value, dhd_master_mode);
 		}
+#ifdef APF
+		if (value) {
+			dhd_dev_apf_enable_filter(dhd_linux_get_primary_netdev(dhd));
+		} else {
+			dhd_dev_apf_disable_filter(dhd_linux_get_primary_netdev(dhd));
+		}
+#endif /* APF */
 	}
 }
 
@@ -2742,7 +2763,11 @@ static int dhd_set_suspend(int value, dhd_pub_t *dhd)
 					4, iovbuf, sizeof(iovbuf));
 				dhd_wl_ioctl_cmd(dhd, WLC_SET_VAR, iovbuf, sizeof(iovbuf), TRUE, 0);
 #endif /* ENABLE_BCN_LI_BCN_WAKEUP */
+#ifndef APF
 				if (FW_SUPPORTED(dhd, ndoe)) {
+#else
+				if (FW_SUPPORTED(dhd, ndoe) && !FW_SUPPORTED(dhd, apf)) {
+#endif /* APF */
 					/* enable IPv6 RA filter in  firmware during suspend */
 					nd_ra_filter = 1;
 					bcm_mkiovar("nd_ra_filter_enable", (char *)&nd_ra_filter, 4,
@@ -2851,7 +2876,11 @@ static int dhd_set_suspend(int value, dhd_pub_t *dhd)
 					4, iovbuf, sizeof(iovbuf));
 				dhd_wl_ioctl_cmd(dhd, WLC_SET_VAR, iovbuf, sizeof(iovbuf), TRUE, 0);
 #endif /* ENABLE_BCN_LI_BCN_WAKEUP */
+#ifndef APF
 				if (FW_SUPPORTED(dhd, ndoe)) {
+#else
+				if (FW_SUPPORTED(dhd, ndoe) && !FW_SUPPORTED(dhd, apf)) {
+#endif /* APF */
 					/* disable IPv6 RA filter in  firmware during suspend */
 					nd_ra_filter = 0;
 					bcm_mkiovar("nd_ra_filter_enable", (char *)&nd_ra_filter, 4,
@@ -3903,6 +3932,11 @@ __dhd_sendpkt(dhd_pub_t *dhdp, int ifidx, void *pktbuf)
 	ndev = dhd_idx2net(dhdp, ifidx);
 	dhd_tx_dump(ndev, dhdp->osh, pktbuf);
 #endif
+#ifdef DYNAMIC_MUMIMO_CONTROL
+	if (dhdp->reassoc_mumimo_sw && dhd_check_tx_eapol_m4(ndev, dhdp, pktbuf)) {
+		dhdp->reassoc_mumimo_sw = 0;
+	}
+#endif /* DYNAMIC_MUMIMO_CONTROL */
 #ifdef PROP_TXSTATUS
 	{
 		if (dhd_wlfc_commit_packets(dhdp, (f_commitpkt_t)dhd_bus_txdata,
@@ -4497,32 +4531,71 @@ dhd_rx_frame(dhd_pub_t *dhdp, int ifidx, void *pktbuf, int numpkt, uint8 chan)
 
 		/* Process special event packets and then discard them */
 		memset(&event, 0, sizeof(event));
+
 		if (ntoh16(skb->protocol) == ETHER_TYPE_BRCM) {
-			dhd_wl_host_event(dhd, &ifidx,
+			bcm_event_msg_u_t evu;
+			int ret_event;
+			int event_type;
+
+			ret_event = wl_host_event_get_data(
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 22)
 			skb_mac_header(skb),
 #else
 			skb->mac.raw,
 #endif /* LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 22) */
-			len > ETHER_TYPE_LEN ? len - ETHER_TYPE_LEN : 0,
-			&event,
-			&data);
+			len, &evu);
+
+			if (ret_event != BCME_OK) {
+				DHD_ERROR(("%s: wl_host_event_get_data err = %d\n",
+					__FUNCTION__, ret_event));
+#ifdef DHD_USE_STATIC_CTRLBUF
+				PKTFREE_STATIC(dhdp->osh, pktbuf, FALSE);
+#else
+				PKTFREE(dhdp->osh, pktbuf, FALSE);
+#endif
+				continue;
+			}
+
+			memcpy(&event, &evu.event, sizeof(wl_event_msg_t));
+			event_type = ntoh32_ua((void *)&event.event_type);
+
+			ret_event = dhd_wl_host_event(dhd, &ifidx,
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 22)
+			skb_mac_header(skb),
+#else
+			skb->mac.raw,
+#endif /* LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 22) */
+			len, &event, &data);
 
 			wl_event_to_host_order(&event);
 			if (!tout_ctrl)
 				tout_ctrl = DHD_PACKET_TIMEOUT_MS;
 #ifdef WLBTAMP
-			if (event.event_type == WLC_E_BTA_HCI_EVENT) {
+			if (event_type == WLC_E_BTA_HCI_EVENT) {
 				dhd_bta_doevt(dhdp, data, event.datalen);
 			}
 #endif /* WLBTAMP */
 
 #if defined(PNO_SUPPORT)
-			if (event.event_type == WLC_E_PFN_NET_FOUND) {
+			if (event_type == WLC_E_PFN_NET_FOUND) {
 				/* enforce custom wake lock to garantee that Kernel not suspended */
 				tout_ctrl = CUSTOM_PNO_EVENT_LOCK_xTIME * DHD_PACKET_TIMEOUT_MS;
 			}
 #endif /* PNO_SUPPORT */
+
+			/* For delete virtual interface event, wl_host_event returns positive
+			 * i/f index, do not proceed. just free the pkt.
+			 */
+			if ((event_type == WLC_E_IF) && (ret_event > 0)) {
+				DHD_ERROR(("%s: interface is deleted. Free event packet\n",
+				__FUNCTION__));
+#ifdef DHD_USE_STATIC_CTRLBUF
+				PKTFREE_STATIC(dhdp->osh, pktbuf, FALSE);
+#else
+				PKTFREE(dhdp->osh, pktbuf, FALSE);
+#endif
+				continue;
+			}
 
 #ifdef DHD_DONOT_FORWARD_BCMEVENT_AS_NETWORK_PKT
 #ifdef DHD_USE_STATIC_CTRLBUF
@@ -5974,13 +6047,23 @@ dhd_stop(struct net_device *net)
 	dhd_wlfc_cleanup(&dhd->pub, NULL, 0);
 #endif
 #ifdef SHOW_LOGTRACE
-	if (dhd->event_data.fmts)
+	if (dhd->event_data.fmts) {
 		kfree(dhd->event_data.fmts);
-	if (dhd->event_data.raw_fmts)
+		dhd->event_data.fmts = NULL;
+	}
+	if (dhd->event_data.raw_fmts) {
 		kfree(dhd->event_data.raw_fmts);
-	if (dhd->event_data.raw_sstr)
+		dhd->event_data.raw_fmts = NULL;
+	}
+	if (dhd->event_data.raw_sstr) {
 		kfree(dhd->event_data.raw_sstr);
+		dhd->event_data.raw_sstr = NULL;
+	}
 #endif /* SHOW_LOGTRACE */
+
+#ifdef APF
+	dhd_dev_apf_delete_filter(net);
+#endif /* APF */
 
 	/* Stop the protocol module */
 	dhd_prot_stop(&dhd->pub);
@@ -6127,6 +6210,9 @@ dhd_open(struct net_device *net)
 #ifdef DHD_LOSSLESS_ROAMING
 	dhd->pub.dequeue_prec_map = ALLPRIO;
 #endif
+#ifdef DYNAMIC_MUMIMO_CONTROL
+	dhd->pub.reassoc_mumimo_sw = 0;
+#endif /* DYNAMIC_MUMIMO_CONTROL */
 #if !defined(WL_CFG80211)
 	/*
 	 * Force start if ifconfig_up gets called before START command
@@ -6619,7 +6705,7 @@ dhd_init_logstrs_array(dhd_event_log_t *temp)
 	uint32 *lognums = NULL;
 	char *logstrs = NULL;
 	int ram_index = 0;
-	char **fmts;
+	char **fmts = NULL;
 	int num_fmts = 0;
 	uint32 i = 0;
 	int error = 0;
@@ -6640,11 +6726,14 @@ dhd_init_logstrs_array(dhd_event_log_t *temp)
 	}
 	logstrs_size = (int) stat.size;
 
-	raw_fmts = kmalloc(logstrs_size, GFP_KERNEL);
-	if (raw_fmts == NULL) {
-		DHD_ERROR(("%s: Failed to allocate memory \n", __FUNCTION__));
-		goto fail;
+	if (temp->raw_fmts == NULL) {
+		raw_fmts = kmalloc(logstrs_size, GFP_KERNEL);
+		if (raw_fmts == NULL) {
+			DHD_ERROR(("%s: Failed to allocate memory \n", __FUNCTION__));
+			goto fail;
+		}
 	}
+
 	if (vfs_read(filep, raw_fmts, logstrs_size, &filep->f_pos) !=	logstrs_size) {
 		DHD_ERROR(("%s: Failed to read file %s", __FUNCTION__, logstrs_path));
 		goto fail;
@@ -6710,10 +6799,13 @@ dhd_init_logstrs_array(dhd_event_log_t *temp)
 				logstrs = (char *)	&raw_fmts[num_fmts << 2];
 			}
 	}
-	fmts = kmalloc(num_fmts  * sizeof(char *), GFP_KERNEL);
-	if (fmts == NULL) {
-		DHD_ERROR(("Failed to allocate fmts memory"));
-		goto fail;
+
+	if (temp->fmts == NULL) {
+		fmts = kmalloc(num_fmts  * sizeof(char *), GFP_KERNEL);
+		if (fmts == NULL) {
+			DHD_ERROR(("Failed to allocate fmts memory"));
+			goto fail;
+		}
 	}
 
 	for (i = 0; i < num_fmts; i++) {
@@ -6874,9 +6966,15 @@ dhd_init_static_strs_array(dhd_event_log_t *temp, char *str_file, char *map_file
 		DHD_ERROR(("readmap Error!! \n"));
 		/* don't do event log parsing in actual case */
 		if (strstr(str_file, ram_file_str) != NULL) {
-			temp->raw_sstr = NULL;
+			if (temp->raw_sstr != NULL) {
+				kfree(temp->raw_sstr);
+				temp->raw_sstr = NULL;
+			}
 		} else if (strstr(str_file, rom_file_str) != NULL) {
-			temp->rom_raw_sstr = NULL;
+			if (temp->rom_raw_sstr != NULL) {
+				kfree(temp->rom_raw_sstr);
+				temp->rom_raw_sstr = NULL;
+			}
 		}
 		return;
 	}
@@ -6895,10 +6993,12 @@ dhd_init_static_strs_array(dhd_event_log_t *temp, char *str_file, char *map_file
 	/* Full file size is huge. Just read required part */
 	logstrs_size = rodata_end - rodata_start;
 
-	raw_fmts = kmalloc(logstrs_size, GFP_KERNEL);
-	if (raw_fmts == NULL) {
-		DHD_ERROR(("%s: Failed to allocate raw_fmts memory \n", __FUNCTION__));
-		goto fail;
+	if (temp->raw_sstr == NULL) {
+		raw_fmts = kmalloc(logstrs_size, GFP_KERNEL);
+		if (raw_fmts == NULL) {
+			DHD_ERROR(("%s: Failed to allocate raw_fmts memory \n", __FUNCTION__));
+			goto fail;
+		}
 	}
 
 	logfilebase = rodata_start - ramstart;
@@ -6940,9 +7040,15 @@ fail:
 		filp_close(filep, NULL);
 	set_fs(fs);
 	if (strstr(str_file, ram_file_str) != NULL) {
-		temp->raw_sstr = NULL;
+		if (temp->raw_sstr != NULL) {
+			kfree(temp->raw_sstr);
+			temp->raw_sstr = NULL;
+		}
 	} else if (strstr(str_file, rom_file_str) != NULL) {
-		temp->rom_raw_sstr = NULL;
+		if (temp->rom_raw_sstr != NULL) {
+			kfree(temp->rom_raw_sstr);
+			temp->rom_raw_sstr = NULL;
+		}
 	}
 	return;
 }
@@ -7111,7 +7217,10 @@ dhd_attach(osl_t *osh, struct dhd_bus *bus, uint bus_hdrlen)
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 25))
 	mutex_init(&dhd->dhd_net_if_mutex);
 	mutex_init(&dhd->dhd_suspend_mutex);
-#endif
+#if defined(PKT_FILTER_SUPPORT) && defined(APF)
+	mutex_init(&dhd->dhd_apf_mutex);
+#endif /* PKT_FILTER_SUPPORT && APF */
+#endif /* (LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 25)) && OEM_ANDROID */
 	dhd_state |= DHD_ATTACH_STATE_WAKELOCKS_INIT;
 
 	/* Attach and link in the protocol */
@@ -8096,6 +8205,9 @@ dhd_preinit_ioctls(dhd_pub_t *dhd)
 #endif /* CUSTOM_EVENT_PM_WAKE */
 #ifdef PKT_FILTER_SUPPORT
 	dhd_pkt_filter_enable = TRUE;
+#ifdef APF
+	dhd->apf_set = FALSE;
+#endif /* APF */
 #endif /* PKT_FILTER_SUPPORT */
 #ifdef WLTDLS
 	dhd->tdls_enable = FALSE;
@@ -10573,7 +10685,7 @@ dhd_get_wireless_stats(struct net_device *dev)
 #endif /* defined(WL_WIRELESS_EXT) */
 
 static int
-dhd_wl_host_event(dhd_info_t *dhd, int *ifidx, void *pktdata, size_t pktlen,
+dhd_wl_host_event(dhd_info_t *dhd, int *ifidx, void *pktdata, uint16 pktlen,
 	wl_event_msg_t *event, void **data)
 {
 	int bcmerror = 0;
@@ -10583,10 +10695,10 @@ dhd_wl_host_event(dhd_info_t *dhd, int *ifidx, void *pktdata, size_t pktlen,
 	ASSERT(dhd != NULL);
 
 #ifdef SHOW_LOGTRACE
-	bcmerror = wl_host_event(&dhd->pub, ifidx, pktdata, pktlen, event, data,
+	bcmerror = wl_process_host_event(&dhd->pub, ifidx, pktdata, pktlen, event, data,
 		&dhd->event_data);
 #else
-	bcmerror = wl_host_event(&dhd->pub, ifidx, pktdata, pktlen, event, data,
+	bcmerror = wl_process_host_event(&dhd->pub, ifidx, pktdata, pktlen, event, data,
 		NULL);
 #endif /* SHOW_LOGTRACE */
 
@@ -10618,6 +10730,28 @@ dhd_wl_host_event(dhd_info_t *dhd, int *ifidx, void *pktdata, size_t pktlen,
 		}
 		spin_unlock_irqrestore(&dhd->pub.up_lock, flags);
 	}
+#ifdef DYNAMIC_MUMIMO_CONTROL
+	if (dhd->pub.reassoc_mumimo_sw) {
+		struct net_device *dev = dhd_idx2net(&dhd->pub, *ifidx);
+		int cur_murx_bfe_cap;
+		uint event_type, status;
+
+		event_type = ntoh32(event->event_type);
+		status = ntoh32(event->status);
+
+		/* Check if reassociation is failed */
+		if (event_type == WLC_E_REASSOC && status != WLC_E_STATUS_SUCCESS) {
+			/* Configure previous murx_bfe_cap value */
+			if (dev && !wl_get_murx_bfe_cap(dev, &cur_murx_bfe_cap)) {
+				wl_set_murx_bfe_cap(dev, cur_murx_bfe_cap ? 0 : 1, FALSE);
+			}
+
+			dhd->pub.reassoc_mumimo_sw = 0;
+			/* Disable flow control */
+			dhd_txflowcontrol(&dhd->pub, ALL_INTERFACES, OFF);
+		}
+	}
+#endif /* DYNAMIC_MUMIMO_CONTROL */
 #endif /* defined(WL_CFG80211) */
 
 	return (bcmerror);
@@ -11611,6 +11745,333 @@ exit:
 	return res;
 }
 #endif /* defined(KEEP_ALIVE) */
+
+#if defined(PKT_FILTER_SUPPORT) && defined(APF)
+static void __dhd_apf_lock_local(dhd_info_t *dhd)
+{
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 25))
+	if (dhd) {
+		mutex_lock(&dhd->dhd_apf_mutex);
+	}
+#endif
+}
+
+static void __dhd_apf_unlock_local(dhd_info_t *dhd)
+{
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 25))
+	if (dhd) {
+		mutex_unlock(&dhd->dhd_apf_mutex);
+	}
+#endif
+}
+
+static int
+__dhd_apf_add_filter(struct net_device *ndev, uint32 filter_id,
+	u8* program, uint32 program_len)
+{
+	dhd_info_t *dhd = DHD_DEV_INFO(ndev);
+	dhd_pub_t *dhdp = &dhd->pub;
+	wl_pkt_filter_t * pkt_filterp;
+	wl_apf_program_t *apf_program;
+	char *buf;
+	u32 cmd_len, buf_len;
+	int ifidx, ret;
+	gfp_t kflags;
+	char cmd[] = "pkt_filter_add";
+
+	ifidx = dhd_net2idx(dhd, ndev);
+	if (ifidx == DHD_BAD_IF) {
+		DHD_ERROR(("%s: bad ifidx\n", __FUNCTION__));
+		return -ENODEV;
+	}
+
+	cmd_len = sizeof(cmd);
+	buf_len = cmd_len + WL_PKT_FILTER_FIXED_LEN +
+		WL_APF_PROGRAM_FIXED_LEN + program_len;
+
+	kflags = in_atomic() ? GFP_ATOMIC : GFP_KERNEL;
+	buf = kzalloc(buf_len, kflags);
+	if (unlikely(!buf)) {
+		DHD_ERROR(("%s: MALLOC failure, %d bytes\n", __FUNCTION__, buf_len));
+		return -ENOMEM;
+	}
+
+	memcpy(buf, cmd, cmd_len);
+
+	pkt_filterp = (wl_pkt_filter_t *) (buf + cmd_len);
+	pkt_filterp->id = htod32(filter_id);
+	pkt_filterp->negate_match = htod32(FALSE);
+	pkt_filterp->type = htod32(WL_PKT_FILTER_TYPE_APF_MATCH);
+
+	apf_program = &pkt_filterp->u.apf_program;
+	apf_program->version = htod16(WL_APF_INTERNAL_VERSION);
+	apf_program->instr_len = htod16(program_len);
+	memcpy(apf_program->instrs, program, program_len);
+
+	ret = dhd_wl_ioctl_cmd(dhdp, WLC_SET_VAR, buf, buf_len, TRUE, ifidx);
+	if (unlikely(ret)) {
+		DHD_ERROR(("%s: failed to add APF filter, id=%d, ret=%d\n",
+			__FUNCTION__, filter_id, ret));
+	}
+
+	if (buf) {
+		kfree(buf);
+	}
+	return ret;
+}
+
+static int
+__dhd_apf_config_filter(struct net_device *ndev, uint32 filter_id,
+	uint32 mode, uint32 enable)
+{
+	dhd_info_t *dhd = DHD_DEV_INFO(ndev);
+	dhd_pub_t *dhdp = &dhd->pub;
+	wl_pkt_filter_enable_t * pkt_filterp;
+	char *buf;
+	u32 cmd_len, buf_len;
+	int ifidx, ret;
+	gfp_t kflags;
+	char cmd[] = "pkt_filter_enable";
+
+	ifidx = dhd_net2idx(dhd, ndev);
+	if (ifidx == DHD_BAD_IF) {
+		DHD_ERROR(("%s: bad ifidx\n", __FUNCTION__));
+		return -ENODEV;
+	}
+
+	cmd_len = sizeof(cmd);
+	buf_len = cmd_len + sizeof(*pkt_filterp);
+
+	kflags = in_atomic() ? GFP_ATOMIC : GFP_KERNEL;
+	buf = kzalloc(buf_len, kflags);
+	if (unlikely(!buf)) {
+		DHD_ERROR(("%s: MALLOC failure, %d bytes\n", __FUNCTION__, buf_len));
+		return -ENOMEM;
+	}
+
+	memcpy(buf, cmd, cmd_len);
+
+	pkt_filterp = (wl_pkt_filter_enable_t *) (buf + cmd_len);
+	pkt_filterp->id = htod32(filter_id);
+	pkt_filterp->enable = htod32(enable);
+
+	ret = dhd_wl_ioctl_cmd(dhdp, WLC_SET_VAR, buf, buf_len, TRUE, ifidx);
+	if (unlikely(ret)) {
+		DHD_ERROR(("%s: failed to enable APF filter, id=%d, ret=%d\n",
+			__FUNCTION__, filter_id, ret));
+		goto exit;
+	}
+
+	ret = dhd_wl_ioctl_set_intiovar(dhdp, "pkt_filter_mode", htod32(mode),
+		WLC_SET_VAR, TRUE, ifidx);
+	if (unlikely(ret)) {
+		DHD_ERROR(("%s: failed to set APF filter mode, id=%d, ret=%d\n",
+			__FUNCTION__, filter_id, ret));
+	}
+
+exit:
+	if (buf) {
+		kfree(buf);
+	}
+	return ret;
+}
+
+static int
+__dhd_apf_delete_filter(struct net_device *ndev, uint32 filter_id)
+{
+	dhd_info_t *dhd = *(dhd_info_t **)netdev_priv(ndev);
+	dhd_pub_t *dhdp = &dhd->pub;
+	int ifidx, ret;
+
+	ifidx = dhd_net2idx(dhd, ndev);
+	if (ifidx == DHD_BAD_IF) {
+		DHD_ERROR(("%s: bad ifidx\n", __FUNCTION__));
+		return -ENODEV;
+	}
+
+	ret = dhd_wl_ioctl_set_intiovar(dhdp, "pkt_filter_delete",
+		htod32(filter_id), WLC_SET_VAR, TRUE, ifidx);
+	if (unlikely(ret)) {
+		DHD_ERROR(("%s: failed to delete APF filter, id=%d, ret=%d\n",
+			__FUNCTION__, filter_id, ret));
+	}
+
+	return ret;
+}
+
+void dhd_apf_lock(struct net_device *dev)
+{
+	dhd_info_t *dhd = DHD_DEV_INFO(dev);
+	__dhd_apf_lock_local(dhd);
+}
+
+void dhd_apf_unlock(struct net_device *dev)
+{
+	dhd_info_t *dhd = DHD_DEV_INFO(dev);
+	__dhd_apf_unlock_local(dhd);
+}
+
+int
+dhd_dev_apf_get_version(struct net_device *ndev, uint32 *version)
+{
+	dhd_info_t *dhd = DHD_DEV_INFO(ndev);
+	dhd_pub_t *dhdp = &dhd->pub;
+	int ifidx, ret;
+
+	if (!FW_SUPPORTED(dhdp, apf)) {
+		DHD_ERROR(("%s: firmware doesn't support APF\n", __FUNCTION__));
+
+		/*
+		 * Notify Android framework that APF is not supported by setting
+		 * version as zero.
+		 */
+		*version = 0;
+		return BCME_OK;
+	}
+
+	ifidx = dhd_net2idx(dhd, ndev);
+	if (ifidx == DHD_BAD_IF) {
+		DHD_ERROR(("%s: bad ifidx\n", __FUNCTION__));
+		return -ENODEV;
+	}
+
+	ret = dhd_wl_ioctl_get_intiovar(dhdp, "apf_ver", version,
+		WLC_GET_VAR, FALSE, ifidx);
+	if (unlikely(ret)) {
+		DHD_ERROR(("%s: failed to get APF version, ret=%d\n",
+			__FUNCTION__, ret));
+	}
+
+	return ret;
+}
+
+int
+dhd_dev_apf_get_max_len(struct net_device *ndev, uint32 *max_len)
+{
+	dhd_info_t *dhd = *(dhd_info_t **)netdev_priv(ndev);
+	dhd_pub_t *dhdp = &dhd->pub;
+	int ifidx, ret;
+
+	if (!FW_SUPPORTED(dhdp, apf)) {
+		DHD_ERROR(("%s: firmware doesn't support APF\n", __FUNCTION__));
+		*max_len = 0;
+		return BCME_OK;
+	}
+
+	ifidx = dhd_net2idx(dhd, ndev);
+	if (ifidx == DHD_BAD_IF) {
+		DHD_ERROR(("%s bad ifidx\n", __FUNCTION__));
+		return -ENODEV;
+	}
+
+	ret = dhd_wl_ioctl_get_intiovar(dhdp, "apf_size_limit", max_len,
+		WLC_GET_VAR, FALSE, ifidx);
+	if (unlikely(ret)) {
+		DHD_ERROR(("%s: failed to get APF size limit, ret=%d\n",
+			__FUNCTION__, ret));
+	}
+
+	return ret;
+}
+
+int
+dhd_dev_apf_add_filter(struct net_device *ndev, u8* program,
+	uint32 program_len)
+{
+	dhd_info_t *dhd = DHD_DEV_INFO(ndev);
+	dhd_pub_t *dhdp = &dhd->pub;
+	int ret = 0;
+
+	DHD_APF_LOCK(ndev);
+
+	/* delete, if filter already exists */
+	if (dhdp->apf_set) {
+		ret = __dhd_apf_delete_filter(ndev, PKT_FILTER_APF_ID);
+		if (unlikely(ret)) {
+			goto exit;
+		}
+
+		dhdp->apf_set = FALSE;
+	}
+
+	ret = __dhd_apf_add_filter(ndev, PKT_FILTER_APF_ID, program, program_len);
+	if (ret) {
+		goto exit;
+	}
+	dhdp->apf_set = TRUE;
+
+	if (dhdp->in_suspend && dhdp->apf_set &&
+		!dhdp->dhcp_in_progress && !dhdp->suspend_disable_flag) {
+		/* Driver is still in (early) suspend state, enable APF filter back */
+		ret = __dhd_apf_config_filter(ndev, PKT_FILTER_APF_ID,
+			PKT_FILTER_MODE_FORWARD_ON_MATCH, TRUE);
+	}
+
+exit:
+	DHD_APF_UNLOCK(ndev);
+
+	return ret;
+}
+
+int
+dhd_dev_apf_enable_filter(struct net_device *ndev)
+{
+	dhd_info_t *dhd = DHD_DEV_INFO(ndev);
+	dhd_pub_t *dhdp = &dhd->pub;
+	int ret = 0;
+
+	DHD_APF_LOCK(ndev);
+
+	if (dhdp->apf_set) {
+		ret = __dhd_apf_config_filter(ndev, PKT_FILTER_APF_ID,
+			PKT_FILTER_MODE_FORWARD_ON_MATCH, TRUE);
+	}
+
+	DHD_APF_UNLOCK(ndev);
+
+	return ret;
+}
+
+int
+dhd_dev_apf_disable_filter(struct net_device *ndev)
+{
+	dhd_info_t *dhd = DHD_DEV_INFO(ndev);
+	dhd_pub_t *dhdp = &dhd->pub;
+	int ret = 0;
+
+	DHD_APF_LOCK(ndev);
+
+	if (dhdp->apf_set) {
+		ret = __dhd_apf_config_filter(ndev, PKT_FILTER_APF_ID,
+			PKT_FILTER_MODE_FORWARD_ON_MATCH, FALSE);
+	}
+
+	DHD_APF_UNLOCK(ndev);
+
+	return ret;
+}
+
+int
+dhd_dev_apf_delete_filter(struct net_device *ndev)
+{
+	dhd_info_t *dhd = DHD_DEV_INFO(ndev);
+	dhd_pub_t *dhdp = &dhd->pub;
+	int ret = 0;
+
+	DHD_APF_LOCK(ndev);
+
+	if (dhdp->apf_set) {
+		ret = __dhd_apf_delete_filter(ndev, PKT_FILTER_APF_ID);
+		if (!ret) {
+			dhdp->apf_set = FALSE;
+		}
+	}
+
+	DHD_APF_UNLOCK(ndev);
+
+	return ret;
+}
+#endif /* PKT_FILTER_SUPPORT && APF */
 
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 27))
 static void dhd_hang_process(void *dhd_info, void *event_info, u8 event)
@@ -13782,7 +14243,7 @@ argos_config_mumimo_handler(struct work_struct *work)
 	}
 
 	new_cap = ctrl_data->cur_murx_bfe_cap;
-	err = wl_set_murx_bfe_cap(dev, new_cap);
+	err = wl_set_murx_bfe_cap(dev, new_cap, TRUE);
 	if (err) {
 		DHD_ERROR(("%s: Failed to set murx_bfe_cap to %d, err=%d\n",
 			__FUNCTION__, new_cap, err));
@@ -13799,9 +14260,15 @@ argos_status_notifier_config_mumimo(struct notifier_block *notifier,
 	struct net_device *dev;
 	int prev_murx_bfe_cap;
 	int cap;
+	dhd_info_t *dhd;
 
 	dev = argos_mumimo_ctrl_data.dev;
 	if (!dev) {
+		return;
+	}
+
+	dhd = DHD_DEV_INFO(dev);
+	if (!dhd) {
 		return;
 	}
 
@@ -13810,9 +14277,20 @@ argos_status_notifier_config_mumimo(struct notifier_block *notifier,
 	/* Check if current associated AP supports MU-MIMO capability
 	 * or current Tput meets the condition for MU-MIMO configuration
 	 */
-	if ((wl_check_bss_support_mumimo(dev) <= 0) ||
+	if ((wl_check_bss_support_mumimo(dev) <= 0) || (speed == 0) ||
 		((speed <= MUMIMO_TO_SUMIMO_TPUT_THRESHOLD) &&
 		(speed >= SUMIMO_TO_MUMIMO_TPUT_THRESHOLD))) {
+		return;
+	}
+
+	/* Check if STA reassociate with the AP after murx configuration */
+	if (dhd->pub.reassoc_mumimo_sw) {
+		/* Cancel the MU-MIMO control timer */
+		if (timer_pending(&argos_mumimo_ctrl_data.config_timer)) {
+			del_timer_sync(&argos_mumimo_ctrl_data.config_timer);
+		}
+
+		DHD_ERROR(("%s: Reassociation is in progress...\n", __FUNCTION__));
 		return;
 	}
 
@@ -14052,6 +14530,37 @@ argos_status_notifier_p2p_cb(struct notifier_block *notifier,
 }
 #endif /* ARGOS_CPU_SCHEDULER && ARGOS_RPS_CPU_CTL */
 
+#ifdef DYNAMIC_MUMIMO_CONTROL
+bool
+dhd_check_tx_eapol_m4(struct net_device *ndev, dhd_pub_t *dhdp, void *pkt)
+{
+	uint8 *dump_data;
+	uint8 type;
+	uint16 protocol, key_info;
+	int pair, ack, mic, kerr, req, sec, install, ism4;
+
+	dump_data = PKTDATA(dhdp->osh, pkt);
+	protocol = (dump_data[12] << 8) | dump_data[13];
+	type = dump_data[18];
+	key_info = (dump_data[19] << 8) | dump_data[20];
+	pair = key_info & 0x08;
+	ack = key_info & 0x80;
+	mic = key_info & 0x100;
+	kerr = key_info & 0x400;
+	req = key_info & 0x800;
+	sec = key_info & 0x200;
+	install = key_info & 0x40;
+	ism4 = pair && !install && !ack && mic && sec && !req && !kerr;
+
+	if (protocol == ETHER_TYPE_802_1X && (type == 2 || type == 254) && ism4) {
+		DHD_INFO(("%s: Send EAPOL M4 Packet\n", __FUNCTION__));
+		return TRUE;
+	}
+
+	return FALSE;
+}
+#endif /* DYNAMIC_MUMIMO_CONTROL */
+
 
 #ifdef DHD_DEBUG_PAGEALLOC
 
@@ -14093,6 +14602,18 @@ dhd_pktid_audit_fail_cb(dhd_pub_t *dhdp)
 	DHD_OS_WAKE_UNLOCK(dhdp);
 }
 #endif /* DHD_PKTID_AUDIT_ENABLED */
+
+struct net_device *
+dhd_linux_get_primary_netdev(dhd_pub_t *dhdp)
+{
+	dhd_info_t *dhd = dhdp->info;
+
+	if (dhd->iflist[0] && dhd->iflist[0]->net) {
+		return dhd->iflist[0]->net;
+	} else {
+		return NULL;
+	}
+}
 
 /* ----------------------------------------------------------------------------
  * Infrastructure code for sysfs interface support for DHD

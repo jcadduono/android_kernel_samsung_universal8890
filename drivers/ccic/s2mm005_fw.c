@@ -309,8 +309,12 @@ int s2mm005_flash(struct s2mm005_data *usbpd_data, unsigned int input)
 			usleep_range(10 * 1000, 10 * 1000);
 
 			retry++;
-			if (retry == 30)
+			if(retry == 15) {
+				s2mm005_reset(usbpd_data);
+				msleep(3000);
+			} else if (retry == 30) {
 				panic("Flash mode change fail!\n");
+			}
 
 		} while (val != FLASH_MODE_FLASH);
 		break;

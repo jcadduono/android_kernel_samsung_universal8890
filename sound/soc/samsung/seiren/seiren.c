@@ -547,6 +547,7 @@ void esa_compr_close(void)
 #ifdef CONFIG_SND_SAMSUNG_SEIREN_OFFLOAD
 static void esa_fw_snapshot(void)
 {
+#if 0
         struct file *sram_filp;
         struct file *dram_filp;
         mm_segment_t old_fs;
@@ -574,6 +575,7 @@ static void esa_fw_snapshot(void)
 	filp_close(dram_filp, NULL);
 
 	set_fs(old_fs);
+#endif
 }
 
 struct kobject *seiren_fw_snapshot_kobj = NULL;

@@ -216,6 +216,17 @@ void s2mm005_reset(struct s2mm005_data *usbpd_data)
 	struct i2c_client *i2c = usbpd_data->i2c;
 	uint16_t REG_ADD;
 	u8 W_DATA[5];
+	u8 R_DATA[1];
+	int i;
+
+	/* for Wake up*/
+	for(i=0; i<5; i++){
+		R_DATA[0] = 0x00;
+		REG_ADD = 0x8;
+		s2mm005_read_byte(i2c, REG_ADD, R_DATA, 1);   //dummy read
+	}
+	udelay(10);
+
 	printk("%s\n",__func__);
 	W_DATA[0] = 0x02;
 	W_DATA[1] = 0x01;
@@ -611,6 +622,7 @@ static int s2mm005_usbpd_probe(struct i2c_client *i2c,
 	u8 W_DATA[8];
 	u8 R_DATA[4];
 	u8 temp, ftrim;
+	int i;
 	struct s2mm005_version chip_swver, fw_swver, hwver;
 #if defined(CONFIG_DUAL_ROLE_USB_INTF)
 	struct dual_role_phy_desc *desc;
@@ -714,9 +726,14 @@ static int s2mm005_usbpd_probe(struct i2c_client *i2c,
 		pr_err("ftrim:%02X %02X %02X %02X\n", R_DATA[0], R_DATA[1], R_DATA[2], R_DATA[3]);
 
 	}
-	s2mm005_get_chip_swversion(usbpd_data, &chip_swver);
-	pr_err("%s CHIP SWversion %2x %2x %2x %2x\n", __func__,
-	       chip_swver.main[2] , chip_swver.main[1], chip_swver.main[0], chip_swver.boot);
+
+	for (i=0; i<2; i++) {
+		s2mm005_get_chip_swversion(usbpd_data, &chip_swver);
+		pr_err("%s CHIP SWversion %2x %2x %2x %2x\n", __func__,
+		       chip_swver.main[2] , chip_swver.main[1], chip_swver.main[0], chip_swver.boot);
+		if(chip_swver.main[0] && (chip_swver.main[0] != 0xff))
+			break;
+	}
 	s2mm005_get_fw_version(&fw_swver, chip_swver.boot, usbpd_data->hw_rev);
 	pr_err("%s SRC SWversion:%2x,%2x,%2x,%2x\n",__func__,
 		fw_swver.main[2], fw_swver.main[1], fw_swver.main[0], fw_swver.boot);

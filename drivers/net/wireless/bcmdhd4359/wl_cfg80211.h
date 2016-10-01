@@ -24,7 +24,7 @@
  *
  * <<Broadcom-WL-IPTag/Open:>>
  *
- * $Id: wl_cfg80211.h 644974 2016-06-22 04:54:25Z $
+ * $Id: wl_cfg80211.h 652895 2016-08-04 06:04:25Z $
  */
 
 /**
@@ -789,9 +789,6 @@ struct bcm_cfg80211 {
 	int custom_scan_home_away_time;
 #endif /* CUSTOMER_SCAN_TIMEOUT_SETTING */
 #endif /* WES_SUPPORT */
-#ifdef DYNAMIC_MUMIMO_CONTROL
-	uint8 reassoc_mumimo_sw;
-#endif /* DYNAMIC_MUMIMO_CONTROL */
 };
 
 #if defined(STRICT_GCC_WARNINGS) && defined(__GNUC__) && (__GNUC__ > 4 || (__GNUC__ == \
@@ -1582,8 +1579,10 @@ int wl_cfg80211_random_mac_disable(void);
 int wl_cfg80211_iface_count(void);
 int wl_check_dongle_idle(struct wiphy *wiphy);
 #ifdef DYNAMIC_MUMIMO_CONTROL
+bool wl_get_murx_reassoc_status(struct bcm_cfg80211 *cfg);
+void wl_set_murx_reassoc_status(struct bcm_cfg80211 *cfg, int enable);
 int wl_check_bss_support_mumimo(struct net_device *dev);
 int wl_get_murx_bfe_cap(struct net_device *dev, int *cap);
-int wl_set_murx_bfe_cap(struct net_device *dev, int val);
+int wl_set_murx_bfe_cap(struct net_device *dev, int val, bool reassoc_req);
 #endif /* DYNAMIC_MUMIMO_CONTROL */
 #endif /* _wl_cfg80211_h_ */

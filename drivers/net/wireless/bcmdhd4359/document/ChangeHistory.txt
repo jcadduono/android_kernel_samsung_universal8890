@@ -1,4 +1,43 @@
-BCM4359 DHD 1.363.59.193 for Android Zen/Noble/Hero/Grace Project
+BCM4359 DHD 1.363.59.196 for Android Zen/Noble/Hero/Grace Project
+
+DHD 1.363.59.196 - 2016.08.11
+Others
+ - CSP:1008832 Fixed instability issues related to dynamic MU-MIMO configuration (Default Disabled - DYNAMIC_MUMIMO_CONTROL)
+ - Security Enhancement for ETHER_TYPE_BRCM frame
+
+
+DHD 1.363.59.195 - 2016.08.05
+New Feature
+ - Android N APF(Android Packet Filter) supported
+
+Others
+ - CSP:1068548 Fixed the HotSpot WPS Certification (4.2.14) failure issue
+ - CSP:1069391 Replaced ccode regrev MY/19 in translate_custom_table
+   (This patch should be sync up with FW 9.75.155.33(BCM4359C0) or higher version, Also it is applied HERO project only)
+ - CSP:1065376 Added ccode regrev AM/1 in translate_custom_table
+   (This patch should be sync up with FW 9.75.155.33(BCM4359C0) or higher version, Also it is applied HERO project only)
+ - CSP:1072223 Fix Hang event process from D3 ACK timeout
+ - CSP:1073993 Replaced ccode regrev DZ/2 in translate_custom_table
+   (This patch should be sync up with FW 9.75.155.33(BCM4359C0) or higher version, Also it is applied just HERO project)
+ - Added exception handling for event log
+ - Fixed memory leak issue of clminfo mfree
+ - Fixed possible deadlock of dhd_tcp_acksuppress feature
+ - Fixed private command for CCX-KRK
+ - Fixed vulnerability issue from PNO command
+
+
+DHD 1.363.59.193.4 - 2016.07.25
+Others
+ - CSP:1068548 Pass the SoftAP information to correct interface for SoftAP-WPS Certification Test
+ - Fixed clminfo memory leak issue - Removed unnecessary malloc code
+ - Fixed potential deadlock from TCP ACK suppress
+
+
+DHD 1.363.59.193.3 - 2016.07.16
+Others
+ - CSP:1072223 Fixed blocking hang event from D3ACK timeout
+ - Fixed memory leak issue of clminfo mfree
+
 
 DHD 1.363.59.193 - 2016.07.05
 Others

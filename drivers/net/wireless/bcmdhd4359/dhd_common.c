@@ -24,7 +24,7 @@
  *
  * <<Broadcom-WL-IPTag/Open:>>
  *
- * $Id: dhd_common.c 642603 2016-06-09 08:33:32Z $
+ * $Id: dhd_common.c 652871 2016-08-04 03:08:32Z $
  */
 #include <typedefs.h>
 #include <osl.h>
@@ -2194,93 +2194,96 @@ wl_event_process_default(wl_event_msg_t *event, struct wl_evt_pport *evt_pport)
 	return BCME_OK;
 }
 
-
-/* validate if the event is proper and if valid copy event header to event
- * if proper event pointer is passed, to just validate, pass NULL to event
- */
 int
-is_wlc_event_frame(void *pktdata, wl_event_msg_t *event, uint pktlen)
+wl_event_process(dhd_pub_t *dhd_pub, int *ifidx, void *pktdata,
+	uint pktlen, void **data_ptr, void *raw_event)
 {
-	uint32 datalen;
-	uint evlen;
-	uint16 subtype, usr_subtype;
-	bcm_event_t *pvt_data = (bcm_event_t *)pktdata;
+	wl_evt_pport_t evt_pport;
+	wl_event_msg_t event;
+	bcm_event_msg_u_t evu;
+	int ret;
 
-	if (pktlen < sizeof(bcm_event_t)) {
-		return (BCME_BADLEN);
+	/* make sure it is a BRCM event pkt and record event data */
+	ret = wl_host_event_get_data(pktdata, pktlen, &evu);
+	if (ret != BCME_OK) {
+		return ret;
 	}
 
-	if (bcmp(BRCM_OUI, &pvt_data->bcm_hdr.oui[0], DOT11_OUI_LEN)) {
-		return (BCME_ERROR);
-	}
+	memcpy(&event, &evu.event, sizeof(wl_event_msg_t));
 
-	subtype = ntoh16_ua((void *)&pvt_data->bcm_hdr.subtype);
-	if (subtype != BCMILCP_SUBTYPE_VENDOR_LONG) {
-		return (BCME_ERROR);
-	}
+	/* convert event from network order to host order */
+	wl_event_to_host_order(&event);
 
-	usr_subtype = ntoh16_ua((void *)&pvt_data->bcm_hdr.usr_subtype);
-	if (usr_subtype != BCMILCP_BCM_SUBTYPE_EVENT &&
-	    usr_subtype != BCMILCP_BCM_SUBTYPE_DNGLEVENT) {
-		return (BCME_ERROR);
-	}
+	/* record event params to evt_pport */
+	evt_pport.dhd_pub = dhd_pub;
+	evt_pport.ifidx = ifidx;
+	evt_pport.pktdata = pktdata;
+	evt_pport.data_ptr = data_ptr;
+	evt_pport.raw_event = raw_event;
+	evt_pport.data_len = pktlen;
 
-	datalen = ntoh32_ua((void *)&pvt_data->event.datalen);
-	evlen = datalen + sizeof(bcm_event_t);
-	if (evlen > pktlen) {
-		return (BCME_BADLEN);
-	}
+	ret = wl_event_process_default(&event, &evt_pport);
 
-	/* copy event header only if proper event pointer is passed,
-	 * if passed NULL, do not copy.
-	 */
-	if (event) {
-		/* memcpy since BRCM event pkt may be unaligned. */
-		memcpy(event, &pvt_data->event, sizeof(wl_event_msg_t));
-	}
-
-	return BCME_OK;
+	return ret;
 }
 
 /* Check whether packet is a BRCM event pkt. If it is, record event data. */
 int
-wl_host_event_get_data(void *pktdata, wl_event_msg_t *event, void **data_ptr, unsigned int pktlen)
+wl_host_event_get_data(void *pktdata, uint pktlen, bcm_event_msg_u_t *evu)
 {
 	int ret;
-	bcm_event_t *pvt_data = (bcm_event_t *)pktdata;
 
-	ret = is_wlc_event_frame(pktdata, event, pktlen);
-	if (ret) {
-		DHD_ERROR(("%s: is_wlc_event_frame failed\n", __FUNCTION__));
-		return ret;
+	ret = is_wlc_event_frame(pktdata, pktlen, 0, evu);
+	if (ret != BCME_OK) {
+		DHD_ERROR(("%s: Invalid event frame, err = %d\n",
+			__FUNCTION__, ret));
 	}
 
-	*data_ptr = &pvt_data[1];
-
-	return BCME_OK;
+	return ret;
 }
 
 int
-wl_host_event(dhd_pub_t *dhd_pub, int *ifidx, void *pktdata, size_t pktlen,
+wl_process_host_event(dhd_pub_t *dhd_pub, int *ifidx, void *pktdata, uint pktlen,
 	wl_event_msg_t *event, void **data_ptr, void *raw_event)
 {
-	bcm_event_t *pvt_data;
+	bcm_event_t *pvt_data = (bcm_event_t *)pktdata;
+	bcm_event_msg_u_t evu;
 	uint8 *event_data;
 	uint32 type, status, datalen;
 	uint16 flags;
 	uint evlen;
 	int ret;
+	uint16 usr_subtype;
 
-	/* make sure it is a BRCM event pkt and record event data */
-	ret = wl_host_event_get_data(pktdata, event, data_ptr, pktlen);
+	ret = wl_host_event_get_data(pktdata, pktlen, &evu);
 	if (ret != BCME_OK) {
 		return ret;
 	}
 
-	pvt_data = (bcm_event_t *)pktdata;
+	usr_subtype = ntoh16_ua((void *)&pvt_data->bcm_hdr.usr_subtype);
+	switch (usr_subtype) {
+	case BCMILCP_BCM_SUBTYPE_EVENT:
+		memcpy(event, &evu.event, sizeof(wl_event_msg_t));
+		*data_ptr = &pvt_data[1];
+		break;
+	case BCMILCP_BCM_SUBTYPE_DNGLEVENT:
+#ifdef DNGL_EVENT_SUPPORT
+		/* If it is a DNGL event process it first */
+		if (dngl_host_event(dhd_pub, pktdata, &evu.dngl_event, pktlen) == BCME_OK) {
+			/*
+			 * Return error purposely to prevent DNGL event being processed
+			 * as BRCM event
+			 */
+			return BCME_ERROR;
+		}
+#endif /* DNGL_EVENT_SUPPORT */
+		return BCME_NOTFOUND;
+	default:
+		return BCME_NOTFOUND;
+	}
 
+	/* start wl_event_msg process */
 	event_data = *data_ptr;
-
 	type = ntoh32_ua((void *)&event->event_type);
 	flags = ntoh16_ua((void *)&event->flags);
 	status = ntoh32_ua((void *)&event->status);
@@ -2355,6 +2358,11 @@ wl_host_event(dhd_pub_t *dhd_pub, int *ifidx, void *pktdata, size_t pktlen,
 			} else if (ifevent->opcode == WLC_E_IF_DEL) {
 				dhd_event_ifdel(dhd_pub->info, ifevent, event->ifname,
 					event->addr.octet);
+				/* Return ifidx (for vitual i/f, it will be > 0)
+				 * so that no other operations on deleted interface
+				 * are carried out
+				 */
+				return ifevent->ifidx;
 			} else if (ifevent->opcode == WLC_E_IF_CHANGE) {
 #ifdef WL_CFG80211
 				wl_cfg80211_notify_ifchange(ifevent->ifidx,
@@ -2464,6 +2472,14 @@ wl_host_event(dhd_pub_t *dhd_pub, int *ifidx, void *pktdata, size_t pktlen,
 #endif /* SHOW_EVENTS */
 
 	return (BCME_OK);
+}
+
+int
+wl_host_event(dhd_pub_t *dhd_pub, int *ifidx, void *pktdata, uint pktlen,
+	wl_event_msg_t *event, void **data_ptr, void *raw_event)
+{
+	return wl_process_host_event(dhd_pub, ifidx, pktdata, pktlen, event, data_ptr,
+			raw_event);
 }
 
 void
@@ -4080,8 +4096,7 @@ dhd_get_clminfo(dhd_pub_t *dhd, char *clm_path)
 	char *memblock = NULL;
 	char *bufp;
 	uint len = MAX_CLMINFO_BUF_SIZE;
-	char *temp_buf = NULL;
-
+	char *tokenp = NULL;
 	int cnt = 0;
 
 	char tokdelim;
@@ -4099,7 +4114,7 @@ dhd_get_clminfo(dhd_pub_t *dhd, char *clm_path)
 		goto out;
 	}
 
-	if ((len > 0) && (len <= MAX_CLMINFO_BUF_SIZE) && memblock) {
+	if ((len > 0) && (len < MAX_CLMINFO_BUF_SIZE) && memblock) {
 		/* Found clminfo file. Parsing the file */
 		DHD_INFO(("clminfo file parsing from %s \n", clminfo_path));
 
@@ -4109,13 +4124,11 @@ dhd_get_clminfo(dhd_pub_t *dhd, char *clm_path)
 		/* clean up the file */
 		len = process_clarification_vars(bufp, len);
 
-		temp_buf = MALLOCZ(dhd->osh, MAX_CLMINFO_BUF_SIZE);
-
-		temp_buf = bcmstrtok(&bufp, "=", &tokdelim);
+		tokenp = bcmstrtok(&bufp, "=", &tokdelim);
 		/* reduce the len of bufp by token byte(1) and ptr length */
-		len -= (strlen(temp_buf) + 1);
+		len -= (strlen(tokenp) + 1);
 
-		if (strncmp(temp_buf, "clm_path", 8) != 0) {
+		if (strncmp(tokenp, "clm_path", 8) != 0) {
 			DHD_ERROR(("%s: Cannot found clm_path\n", __FUNCTION__));
 			bcmerror = BCME_ERROR;
 			goto out;
@@ -4159,24 +4172,23 @@ dhd_get_clminfo(dhd_pub_t *dhd, char *clm_path)
 				goto out;
 			}
 
-			memset(temp_buf, 0, strlen(temp_buf));
 			/* parsing relocale data */
-			temp_buf = bcmstrtok(&bufp, "=/;", &tokdelim);
-			len -= (strlen(temp_buf) + 1);
+			tokenp = bcmstrtok(&bufp, "=/;", &tokdelim);
+			len -= (strlen(tokenp) + 1);
 
 			if ((parse_step == 0) && (tokdelim == '=')) {
 				memcpy(translate_custom_table[cnt].iso_abbrev,
-					temp_buf, strlen(temp_buf));
+					tokenp, strlen(tokenp));
 				parse_step++;
 			} else if ((parse_step == 1) && (tokdelim == '/')) {
 				memcpy(translate_custom_table[cnt].custom_locale,
-					temp_buf, strlen(temp_buf));
+					tokenp, strlen(tokenp));
 				parse_step++;
 			} else if ((parse_step == 2) && (tokdelim == ';')) {
 				char *str, *endptr = NULL;
 				int locale_rev;
 
-				str = temp_buf;
+				str = tokenp;
 				locale_rev = (int)strtoul(str, &endptr, 0);
 				if (*endptr != 0) {
 					bcmerror = BCME_ERROR;
@@ -4204,10 +4216,7 @@ dhd_get_clminfo(dhd_pub_t *dhd, char *clm_path)
 	}
 out:
 	if (memblock) {
-		dhd_free_download_buffer(dhd, memblock, MAX_NVRAMBUF_SIZE);
-	}
-	if (temp_buf) {
-		MFREE(dhd->osh, temp_buf, MAX_CLMINFO_BUF_SIZE);
+		dhd_free_download_buffer(dhd, memblock, MAX_CLMINFO_BUF_SIZE);
 	}
 	if (bcmerror != BCME_OK) {
 		DHD_ERROR(("%s: .clminfo parsing fail!!\n", __FUNCTION__));

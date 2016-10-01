@@ -63,9 +63,11 @@
 #define STORE_MODE_CHARGING_MAX 35
 #define STORE_MODE_CHARGING_MIN 30
 #else
-#define STORE_MODE_CHARGING_MAX 70
-#define STORE_MODE_CHARGING_MIN 60
+#define STORE_MODE_CHARGING_MAX 50
+#define STORE_MODE_CHARGING_MIN 40
 #endif
+
+#define CISD_CHARGING_MAX	60
 
 #define ADC_CH_COUNT		10
 #define ADC_SAMPLE_COUNT	10
@@ -91,6 +93,7 @@
 #endif
 #define BATT_MISC_EVENT_WIRELESS_BACKPACK_TYPE	0x00000002
 #define BATT_MISC_EVENT_TIMEOUT_OPEN_TYPE		0x00000004
+#define BATT_MISC_EVENT_CISD					0x00000010
 
 #define SEC_INPUT_VOLTAGE_5V	5
 #define SEC_INPUT_VOLTAGE_9V	9
@@ -129,6 +132,64 @@ struct adc_sample_info {
 	int average_adc;
 	int adc_arr[ADC_SAMPLE_COUNT];
 	int index;
+};
+
+#define CISD_STATE_NONE			0x00
+#define CISD_STATE_CAP_OVERFLOW	0x01
+#define CISD_STATE_VOLT_DROP	0x02
+#define CISD_STATE_SOC_DROP		0x04
+#define CISD_STATE_RESET		0x08
+
+#define CISD_SOCDROP_MAXSIZE	100
+
+struct cisd_info {
+	unsigned int voltage_now;
+	unsigned int voltage_avg;
+	unsigned int capacity_max;
+	unsigned int capacity_now;
+};
+
+struct cisd_socdrop_info {
+	int soc;
+	unsigned long time;
+};
+
+struct cisd {
+	struct wake_lock wake_lock;
+	struct delayed_work work;
+	struct alarm alarm;
+	bool is_alarm_running;
+
+	unsigned int onoff_flag;
+	unsigned int chg_onoff_flag;
+	unsigned int count_cap;
+	unsigned int count_soc;
+	unsigned int state;
+	unsigned int chg_limit;
+	unsigned int charging_disabled;
+	unsigned int over_fullcap;
+
+	struct cisd_info info_old;
+	struct cisd_info info_new;
+
+	unsigned int socdrop_read_index;
+	unsigned int socdrop_store_index;
+	struct cisd_socdrop_info socdrop_info[CISD_SOCDROP_MAXSIZE];
+
+	struct cisd_info result_info;
+	struct cisd_socdrop_info result_socdrop_info;
+
+	unsigned int delay_time;
+	int diff_volt_now;
+	int diff_cap_now;
+	int curr_cap_max;
+	int err_cap_max_thrs;
+	int diff_soc;
+	unsigned int diff_time;
+
+	int check_temp_min;
+	int check_soc_min;
+	int check_volt_min;
 };
 
 struct sec_battery_info {
@@ -205,6 +266,10 @@ struct sec_battery_info {
 	struct alarm polling_alarm;
 	ktime_t last_poll_time;
 
+	struct cisd cisd;
+	bool use_cisd;
+	bool cisd_chg_limit_enable;
+
 	/* battery check */
 	unsigned int check_count;
 	/* ADC check */
@@ -229,6 +294,8 @@ struct sec_battery_info {
 
 	/* chg temperature check */
 	unsigned int chg_limit;
+	unsigned int chg_limit_recovery_cable;
+	unsigned int vbus_chg_by_siop;
 	unsigned int mix_limit;
 
 	/* temperature check */
@@ -544,6 +611,18 @@ enum {
 	BATT_WDT_CONTROL,
 	MODE,
 	CHECK_PS_READY,
+
+	CISD_ONOFF,
+	CISD_INFO_VALUE,
+	CISD_DIFF_VALUE,
+	CISD_RESULT,
+	CISD_COUNT_CAP,
+	CISD_COUNT_SOC,
+	CISD_FULLCAPREP_MAX,
+	CISD_REMCAP,
+	CISD_CHG_ONOFF,
+	CISD_CHG_LIMIT,
+	DESIGNCAP_CORRUPT,
 };
 
 enum {

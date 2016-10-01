@@ -827,16 +827,7 @@ int fts_fw_update_on_probe(struct fts_ts_info *info)
 
 				}
 */
-	/* for Valley Devices */
-	if((strncmp(info->board->project_name, "valley", 6) == 0)){
-		if (info->board->firmware_name){
-			tsp_debug_err(true, info->dev,"%s: V model, firmware name in dts\n", __func__);
-			info->firmware_name = info->board->firmware_name;
-		} else {
-			tsp_debug_err(true, info->dev,"%s: V model, firmware name is not in dts & skip!\n", __func__);
-			goto exit_fwload;
-		}
-	} else if((lcdtype & LCD_ID2_MODEL_MASK) == MODEL_HEROPLUS){
+	if((lcdtype & LCD_ID2_MODEL_MASK) == MODEL_HEROPLUS){
 		tsp_debug_err(true, info->dev,"%s:FTS7AD56 - HEROPLUS\n", __func__);
 		tspid2 = gpio_get_value(info->board->tspid2);
 		if (tspid2)

@@ -24,7 +24,7 @@
  *
  * <<Broadcom-WL-IPTag/Open:>>
  *
- * $Id: dhd_ip.c 645813 2016-06-27 11:23:43Z $
+ * $Id: dhd_ip.c 647938 2016-07-08 10:21:30Z $
  */
 #include <typedefs.h>
 #include <osl.h>
@@ -384,7 +384,7 @@ int dhd_tcpack_suppress_set(dhd_pub_t *dhdp, uint8 mode)
 		/* Clean up timer/data structure for any remaining/pending packet or timer. */
 		if (tcpack_sup_module) {
 			for (i = 0; i < TCPACK_INFO_MAXNUM; i++) {
-				del_timer_sync(&tcpack_sup_module->tcpack_info_tbl[i].timer);
+				del_timer(&tcpack_sup_module->tcpack_info_tbl[i].timer);
 				if (tcpack_sup_module->tcpack_info_tbl[i].pkt_in_q) {
 					PKTFREE(dhdp->osh,
 						tcpack_sup_module->tcpack_info_tbl[i].pkt_in_q,

@@ -81,7 +81,7 @@
 		pinctrl-0 = <&ifc_sense_int_ap>;
 		/* battery,irq_gpio = <&gpa1 6 0>; */
 
-		battery,vendor = "SDI SDI";
+		battery,vendor = "BATTERY";
 		battery,charger_name = "sec-multi-charger";
 		battery,fuelgauge_name = "max77854-fuelgauge";
 		battery,wireless_charger_name = "p9220-charger";
@@ -273,6 +273,8 @@
 		battery,max_input_voltage = <12000>; /* mV */
 		battery,max_input_current = <3000>;  /* mA */
 
+		battery,use_cisd;
+
 		io-channels = <&exynos_adc 1>, <&exynos_adc 3>, <&exynos_adc 6>, <&exynos_adc 3>;
 		io-channel-names = "adc-temp", "adc-chg-temp", "adc-in-bat", "adc-wpc-temp";
 		#io-channel-cells = <3>;
@@ -314,7 +316,7 @@
 		fuelgauge,qrtable20 = <0x0D00>;
 		fuelgauge,qrtable30 = <0x0A81>;
 		fuelgauge,fg_resistor = <1>;
-		fuelgauge,capacity = <0x0D1E>;
+		fuelgauge,capacity = <0x0D1F>;
 		/*fuelgauge,auto_discharge_en;*/
 		fuelgauge,discharge_temp_threshold = <600>;
 		fuelgauge,discharge_volt_threshold = <4200>;

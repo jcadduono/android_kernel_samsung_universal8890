@@ -168,6 +168,7 @@ struct vfsspi_device_data {
 #endif
 	unsigned int retain_pin;
 	unsigned int retain_onoff;
+	unsigned int retain_delayset;
 	struct work_struct work_debug;
 	struct workqueue_struct *wq_dbg;
 	struct timer_list dbg_timer;
@@ -182,6 +183,7 @@ struct vfsspi_device_data {
 	bool enabled_clk;
 #ifdef FEATURE_SPI_WAKELOCK
 	struct wake_lock fp_spi_lock;
+	struct wake_lock fp_signal_lock;
 #endif
 #endif
 	int sensortype;
@@ -219,6 +221,19 @@ extern int change_touchkey_thd_for_fingerprint(int on);
 #endif
 
 #ifdef CONFIG_FB
+static void vfsspi_set_retain_pin(struct vfsspi_device_data *vfsspi_device, int value, int flush){
+#ifdef ENABLE_SENSORS_FPRINT_SECURE
+	if(!vfsspi_device->enabled_clk || flush)
+		gpio_set_value(vfsspi_device->retain_pin, value);
+	vfsspi_device->retain_delayset = value;
+#else
+	gpio_set_value(vfsspi_device->retain_pin, value);
+	vfsspi_device->retain_delayset = value;
+#endif
+	pr_info("%s pin %d, dset %d flush %d", __func__, gpio_get_value(vfsspi_device->retain_pin),
+		vfsspi_device->retain_delayset, flush);
+}
+
 static int vfsspi_fb_notifier_callback(struct notifier_block *self,
 				unsigned long event, void *data)
 {
@@ -226,15 +241,14 @@ static int vfsspi_fb_notifier_callback(struct notifier_block *self,
 	int              *blank;
 
 	if (g_data->retain_pin) {
-		pr_info("%s: event = %lu", __func__, event);
 		if (evdata && evdata->data && event == FB_EVENT_BLANK) {
 			blank = evdata->data;
 			if (*blank == FB_BLANK_UNBLANK){
+				vfsspi_set_retain_pin(g_data, 1, 0);
 				pr_info("vfsspi: FB_BLANK_UNBLANK\n");
-				gpio_set_value(g_data->retain_pin, 1);
 			} else if (*blank == FB_BLANK_POWERDOWN) {
+				vfsspi_set_retain_pin(g_data, 0, 0);
 				pr_info("vfsspi: FB_BLANK_POWERDOWN\n");
-				gpio_set_value(g_data->retain_pin, 0);
 			}
 		}
 	} else
@@ -249,8 +263,7 @@ void vfsspi_fp_homekey_ev(void){
 		if (gpio_get_value(g_data->retain_pin) == 0)
 			return;
 #endif
-		gpio_set_value(g_data->retain_pin, 1);
-		pr_info("%s retain %d\n", __func__, gpio_get_value(g_data->retain_pin));
+		vfsspi_set_retain_pin(g_data, 1, 0);
 	} else
 		pr_err("%s : not set the retain pin!\n", __func__);
 }
@@ -756,6 +769,8 @@ static int vfsspi_ioctl_disable_spi_clock(
 		wake_unlock(&vfsspi_device->fp_spi_lock);
 #endif
 		vfsspi_device->enabled_clk = false;
+		if (vfsspi_device->retain_pin)
+			vfsspi_set_retain_pin(vfsspi_device, vfsspi_device->retain_delayset, 1);
 	}
 	return ret_val;
 }
@@ -790,6 +805,7 @@ static int vfsspi_register_drdy_signal(struct vfsspi_device_data *vfsspi_device,
 static int vfsspi_enableIrq(struct vfsspi_device_data *vfsspi_device)
 {
 	pr_info("%s\n", __func__);
+	vfsspi_set_retain_pin(vfsspi_device, vfsspi_device->retain_delayset, 1);
 	spin_lock_irq(&vfsspi_device->irq_lock);
 	if (atomic_read(&vfsspi_device->irq_enabled)
 		== DRDY_IRQ_ENABLE) {
@@ -843,6 +859,11 @@ static irqreturn_t vfsspi_irq(int irq, void *context)
 			cnt_irq--;
 			spin_unlock(&vfsspi_device->irq_lock);
 			vfsspi_send_drdy_signal(vfsspi_device);
+#ifdef ENABLE_SENSORS_FPRINT_SECURE
+#ifdef FEATURE_SPI_WAKELOCK
+			wake_lock_timeout(&vfsspi_device->fp_signal_lock, 3 * HZ);
+#endif
+#endif
 			pr_info("%s disableIrq\n", __func__);
 		}
 		else {
@@ -1286,6 +1307,7 @@ static int vfsspi_platformInit(struct vfsspi_device_data *vfsspi_device)
 	}
 	if (vfsspi_device->retain_pin) {
 		status = gpio_direction_output(vfsspi_device->retain_pin, 1);
+		vfsspi_device->retain_delayset = 1;
 		if (status < 0) {
 			pr_err("%s gpio_direction_output retainPin failed\n", __func__);
 			status = -EBUSY;
@@ -1320,6 +1342,8 @@ static int vfsspi_platformInit(struct vfsspi_device_data *vfsspi_device)
 #ifdef FEATURE_SPI_WAKELOCK
 	wake_lock_init(&vfsspi_device->fp_spi_lock,
 		WAKE_LOCK_SUSPEND, "vfsspi_wake_lock");
+	wake_lock_init(&vfsspi_device->fp_signal_lock,
+		WAKE_LOCK_SUSPEND, "vfsspi_sigwake_lock");
 #endif
 #endif
 
@@ -1376,6 +1400,7 @@ static void vfsspi_platformUninit(struct vfsspi_device_data *vfsspi_device)
 #ifdef ENABLE_SENSORS_FPRINT_SECURE
 #ifdef FEATURE_SPI_WAKELOCK
 		wake_lock_destroy(&vfsspi_device->fp_spi_lock);
+		wake_lock_destroy(&vfsspi_device->fp_signal_lock);
 #endif
 #endif
 	}
@@ -1578,9 +1603,9 @@ static ssize_t vfsspi_retain_store(struct device *dev,
 	}
 
 	if (val == 1) {
-		gpio_set_value(g_data->retain_pin, 1);
+		vfsspi_set_retain_pin(g_data, 1, 1);
 	} else if (val == 0) {
-		gpio_set_value(g_data->retain_pin, 0);
+		vfsspi_set_retain_pin(g_data, 0, 1);
 	} else {
 		pr_err("%s, input value was not accepted.\n", __func__);
 		return -EINVAL;

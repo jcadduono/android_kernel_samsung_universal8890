@@ -2164,6 +2164,8 @@ int muic_afc_set_voltage(int vol)
 		hv_muic_change_afc_voltage(pmuic, MUIC_HV_5V);			
 	} else if (vol == 9) {
 		hv_muic_change_afc_voltage(pmuic, MUIC_HV_9V);
+	} else if (vol == 12) {
+		hv_muic_change_afc_voltage(pmuic, MUIC_HV_12V);
 	} else {
 		pr_warn("%s:%s invalid value\n", MUIC_DEV_NAME, __func__);
 		return 0;

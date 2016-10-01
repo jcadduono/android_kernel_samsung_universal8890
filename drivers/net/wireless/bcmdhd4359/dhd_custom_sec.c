@@ -180,11 +180,6 @@ const struct cntry_locales_custom translate_custom_table[] = {
 	{"MH", "XZ", 11},	/* Universal if Country code is MARSHALL ISLANDS */
 	{"GL", "GP", 2},
 	{"AL", "AL", 2},
-#ifdef DHD_SUPPORT_GB_999
-	{"DZ", "GB", 999},
-#else
-	{"DZ", "GB", 6},
-#endif /* DHD_SUPPORT_GB_999 */
 	{"AS", "AS", 12},
 	{"AI", "AI", 1},
 	{"AF", "AD", 0},
@@ -245,7 +240,18 @@ const struct cntry_locales_custom translate_custom_table[] = {
 	{"MO", "SG", 0},
 	{"MK", "MK", 2},
 	{"MW", "MW", 1},
+#ifdef DHD_SUPPORT_MY_19_AM_1_DZ_2
+	{"AM", "AM", 1},
+	{"MY", "MY", 19},
+	{"DZ", "DZ", 2},
+#else
 	{"MY", "MY", 3},
+#ifdef DHD_SUPPORT_GB_999
+	{"DZ", "GB", 999},
+#else
+	{"DZ", "GB", 6},
+#endif /* DHD_SUPPORT_GB_999 */
+#endif /* DHD_SUPPORT_MY_19_AM_1_DZ_2 */
 	{"MV", "MV", 3},
 	{"MT", "MT", 4},
 	{"MQ", "MQ", 2},

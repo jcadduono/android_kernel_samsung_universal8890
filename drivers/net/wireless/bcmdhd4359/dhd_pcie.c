@@ -24,7 +24,7 @@
  *
  * <<Broadcom-WL-IPTag/Open:>>
  *
- * $Id: dhd_pcie.c 645077 2016-06-22 12:55:51Z $
+ * $Id: dhd_pcie.c 648967 2016-07-14 09:15:06Z $
  */
 
 
@@ -4036,20 +4036,16 @@ dhdpcie_bus_suspend(struct dhd_bus *bus, bool state)
 			/* resume all interface network queue. */
 			dhd_bus_start_queue(bus);
 			DHD_GENERAL_UNLOCK(bus->dhd, flags);
-			if (bus->dhd->d3ackcnt_timeout >= MAX_CNTL_D3ACK_TIMEOUT) {
-				DHD_ERROR(("%s: Event HANG send up "
-					"due to PCIe linkdown\n", __FUNCTION__));
+			DHD_ERROR(("%s: Event HANG send up "
+						"due to PCIe linkdown\n", __FUNCTION__));
 #ifdef SUPPORT_LINKDOWN_RECOVERY
 #ifdef CONFIG_ARCH_MSM
-				bus->no_cfg_restore = 1;
+			bus->no_cfg_restore = 1;
 #endif /* CONFIG_ARCH_MSM */
 #endif /* SUPPORT_LINKDOWN_RECOVERY */
-				dhd_os_check_hang(bus->dhd, 0, -ETIMEDOUT);
-			}
+			dhd_os_check_hang(bus->dhd, 0, -ETIMEDOUT);
 			rc = -ETIMEDOUT;
-
 		}
-
 		bus->wait_for_d3_ack = 1;
 		DHD_GENERAL_LOCK(bus->dhd, flags);
 		bus->dhd->dhd_bus_busy_state &= ~DHD_BUS_BUSY_IN_SUSPEND;

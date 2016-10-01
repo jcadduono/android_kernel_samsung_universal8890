@@ -26,7 +26,7 @@
  *
  * <<Broadcom-WL-IPTag/Open:>>
  *
- * $Id: dhd_msgbuf.c 645077 2016-06-22 12:55:51Z $
+ * $Id: dhd_msgbuf.c 648967 2016-07-14 09:15:06Z $
  */
 
 
@@ -4743,7 +4743,7 @@ dhd_msgbuf_wait_ioctl_cmplt(dhd_pub_t *dhd, uint32 len, void *buf)
 			dhd->bus->no_cfg_restore = 1;
 #endif /* CONFIG_ARCH_MSM */
 #endif /* SUPPORT_LINKDOWN_RECOVERY */
-			DHD_ERROR(("%s: timeout > MAX_CNTL_TX_TIMEOUT\n", __FUNCTION__));
+			DHD_ERROR(("%s: timeout > MAX_CNTL_RX_TIMEOUT\n", __FUNCTION__));
 		}
 		ret = -ETIMEDOUT;
 		goto out;

@@ -366,6 +366,8 @@ endif
   DHDCFLAGS += -DAPSTA_BLOCK_ARP_DURING_DHCP
  # Use restricted channels on STA/SoftAP concurrent mode
   DHDCFLAGS += -DAPSTA_RESTRICTED_CHANNEL
+# To support APF
+  DHDCFLAGS += -DAPF
 
 ifeq ($(filter y,$(CONFIG_ARCH_MSM8996) $(CONFIG_SOC_EXYNOS8890)),y)
  # Runtime PM
@@ -376,6 +378,7 @@ ifeq ($(filter y,$(CONFIG_ARCH_MSM8996) $(CONFIG_SOC_EXYNOS8890)),y)
   DHDCFLAGS := $(filter-out -DSOFTAP_SEND_HANGEVT,$(DHDCFLAGS))
  # CLM
   DHDCFLAGS += -DDHD_SUPPORT_GB_999
+  DHDCFLAGS += -DDHD_SUPPORT_MY_19_AM_1_DZ_2
  # Configure MU-MIMO capability
   #DHDCFLAGS += -DDYNAMIC_MUMIMO_CONTROL
 endif
