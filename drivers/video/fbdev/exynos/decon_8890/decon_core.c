@@ -2904,6 +2904,10 @@ static void decon_update_regs(struct decon_device *decon, struct decon_reg_data 
 #endif
 	if( !decon->systrace_pid ) decon->systrace_pid = current->pid;
 	decon->tracing_mark_write( decon->systrace_pid, 'B', "decon_update_regs", 0 );
+#ifdef CONFIG_FB_DSU
+	if (!decon->id && decon->pdata->out_type == DECON_OUT_DSI)
+		mutex_lock(&decon->dsu_lock);
+#endif
 
 	decon->cur_frame_has_yuv = 0;
 
@@ -3105,6 +3109,12 @@ end:
 		decon->req_display_on = 0;
 }
 #endif
+
+#ifdef CONFIG_FB_DSU
+	if (!decon->id && decon->pdata->out_type == DECON_OUT_DSI)
+		mutex_unlock(&decon->dsu_lock);
+#endif
+
 }
 
 static void decon_update_regs_handler(struct kthread_work *work)
@@ -3346,7 +3356,7 @@ static int decon_clear_set_colormap(struct decon_device *decon,
 		}
 	}
 	win_config[0].state = DECON_WIN_STATE_COLOR;
-	win_config[0].fence_fd = -1;	
+	win_config[0].fence_fd = -1;
 	win_config[0].color = 0;
 	win_config[0].dst.x = 0;
 	win_config[0].dst.y = 0;
@@ -3389,6 +3399,8 @@ static int decon_set_win_config(struct decon_device *decon,
 	if (fd < 0)
 		return fd;
 
+	mutex_lock(&decon->output_lock);
+
 #ifdef CONFIG_FB_DSU
 	decon_store_window_rect_log( decon, win_data );
 	if( cnt_after_dsu_changed >= 0 ) {
@@ -3410,11 +3422,17 @@ static int decon_set_win_config(struct decon_device *decon,
 		decon_print_bufered_window_rect_log();
 		cnt_after_dsu_changed = 0; // trigger
 
+		if (!decon->id && decon->pdata->out_type == DECON_OUT_DSI) {
+			pr_info( "%s.%d : lock : dsu_lock\n", __func__, __LINE__ );
+			mutex_lock(&decon->dsu_lock);
+		}
 		decon_dsu_change( decon, update_config );
+		if (!decon->id && decon->pdata->out_type == DECON_OUT_DSI) {
+			mutex_unlock(&decon->dsu_lock);
+			pr_info( "%s.%d : lock : dsu_unlock\n", __func__, __LINE__ );
+		}
 	}
 #endif	// CONFIG_FB_DSU
-
-	mutex_lock(&decon->output_lock);
 
 	if ((decon->state == DECON_STATE_OFF) || (decon->ignore_vsync == true) ||
 		(decon->pdata->out_type == DECON_OUT_TUI)) {
@@ -5236,6 +5254,15 @@ static int decon_probe(struct platform_device *pdev)
 	decon->systrace_pid = 0;
 	decon->tracing_mark_write = tracing_mark_write;
 
+#ifdef CONFIG_FB_DSU
+	if (!decon->id && decon->pdata->out_type == DECON_OUT_DSI) {
+		decon->DSU_mode = 0;
+		decon->need_DSU_update = 0;
+		decon->dsu_lock_cnt = 0;
+		mutex_init(&decon->dsu_lock);
+	}
+#endif
+
 	/* init work thread for update registers */
 	mutex_init(&decon->update_regs_list_lock);
 	INIT_LIST_HEAD(&decon->update_regs_list);
@@ -5375,8 +5402,7 @@ decon_init_done:
 		decon->ignore_vsync = false;
 		decon->disp_ss_log_level = DISP_EVENT_LEVEL_HIGH;
 		if ((decon->id == 0)  && (decon->pdata->psr_mode == DECON_MIPI_COMMAND_MODE)) {
-			if (dsim == NULL)
-			{
+			if (dsim == NULL) {
 				sd = decon->mdev->vpp_sd[decon->default_idma];
 				dsim = container_of(decon->output_sd, struct dsim_device, sd);
 			}
@@ -5420,12 +5446,6 @@ decon_init_done:
 		}
 
 		ret = decon_register_esd_funcion(decon);
-
-#ifdef CONFIG_FB_DSU
-	        decon->DSU_mode = 0;
-	        decon->need_DSU_update = 0;
-		decon->dsu_lock_cnt = 0;
-#endif
 
 decon_rest_init:
 		decon->state = DECON_STATE_INIT;
@@ -5476,6 +5496,10 @@ fail_update_thread:
 	mutex_destroy(&decon->output_lock);
 	mutex_destroy(&decon->mutex);
 	mutex_destroy(&decon->update_regs_list_lock);
+#ifdef CONFIG_FB_DSU
+	if (!decon->id && decon->pdata->out_type == DECON_OUT_DSI)
+		mutex_destroy(&decon->dsu_lock);
+#endif
 
 	if (decon->update_regs_thread)
 		kthread_stop(decon->update_regs_thread);

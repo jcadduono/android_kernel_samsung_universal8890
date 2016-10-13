@@ -931,8 +931,10 @@ int esa_effect_write(int type, int *value, int count)
 	int i, *effect_value;
 	int ret = 0;
 
-	if (!check_esa_compr_state() ||
-	   (pm_runtime_get_sync(&si.pdev->dev) < 0))
+	if (!check_esa_compr_state())
+		return 0;
+
+	if (pm_runtime_get_sync(&si.pdev->dev) < 0)
 		return 0;
 
 	effect_value = value;
@@ -2578,8 +2580,6 @@ static int esa_probe(struct platform_device *pdev)
 	pm_runtime_use_autosuspend(dev);
 	pm_runtime_set_autosuspend_delay(dev, 300);
 	pm_runtime_enable(dev);
-	pm_runtime_get_sync(dev);
-	pm_runtime_put_sync(dev);
 #else
 	esa_do_resume(dev);
 #endif

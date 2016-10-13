@@ -12,7 +12,7 @@
 /dts-v1/;
 #include "exynos8890-gracelte_common.dtsi"
 #include "exynos8890-gracelte_kor_gpio_04.dtsi"
-#include "exynos8890-gracelte_battery_eur_02.dtsi"
+#include "exynos8890-gracelte_battery_kor_02.dtsi"
 #include "exynos8890-sound-cs47l91.dtsi"
 #include "exynos8890-gracelte-sound-cs47l91.dtsi"
 #include "exynos8890-luckylte_mst.dtsi"

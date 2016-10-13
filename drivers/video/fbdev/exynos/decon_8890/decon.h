@@ -862,7 +862,8 @@ struct decon_device {
 	int		DSU_y_delta;
 	struct decon_win_rect DSU_rect;
 	struct decon_lcd lcd_info_default;
-	s64	dsu_lock_cnt;
+	s64	dsu_lock_cnt;	/* for HA5 DDI register-Locking */
+	struct mutex	dsu_lock;
 #endif
 };
 

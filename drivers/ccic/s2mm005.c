@@ -859,7 +859,8 @@ static void s2mm005_usbpd_shutdown(struct i2c_client *i2c)
 	disable_irq(usbpd_data->irq);
 
 	if ((usbpd_data->cur_rid != RID_523K) &&
-	    (usbpd_data->cur_rid != RID_619K))
+	    (usbpd_data->cur_rid != RID_619K) &&
+	    (!usbpd_data->manual_lpm_mode))
 		s2mm005_reset(usbpd_data);
 }
 
