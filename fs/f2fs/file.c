@@ -137,7 +137,7 @@ static inline bool need_do_checkpoint(struct inode *inode)
 
 	if (!S_ISREG(inode->i_mode) || inode->i_nlink != 1)
 		need_cp = true;
-	else if (file_enc_name(inode) && need_dentry_mark(sbi, inode->i_ino))
+	else if (is_sbi_flag_set(sbi, SBI_NEED_CP))
 		need_cp = true;
 	else if (file_wrong_pino(inode))
 		need_cp = true;
@@ -525,7 +525,7 @@ static int truncate_partial_data_page(struct inode *inode, u64 from,
 		return 0;
 
 	if (cache_only) {
-		page = f2fs_grab_cache_page(mapping, index, false);
+		page = find_lock_page(mapping, index);
 		if (page && PageUptodate(page))
 			goto truncate_out;
 		f2fs_put_page(page, 1);
@@ -1458,7 +1458,7 @@ static int f2fs_ioc_setflags(struct file *filp, unsigned long arg)
 {
 	struct inode *inode = file_inode(filp);
 	struct f2fs_inode_info *fi = F2FS_I(inode);
-	unsigned int flags = fi->i_flags & FS_FL_USER_VISIBLE;
+	unsigned int flags;
 	unsigned int oldflags;
 	int ret;
 
@@ -1965,7 +1965,7 @@ static int f2fs_defragment_range(struct f2fs_sb_info *sbi,
 	 * avoid defragment running in SSR mode when free section are allocated
 	 * intensively
 	 */
-	if (has_not_enough_free_secs(sbi, sec_num)) {
+	if (has_not_enough_free_secs(sbi, 0, sec_num)) {
 		err = -EAGAIN;
 		goto out;
 	}
@@ -2090,15 +2090,26 @@ static int f2fs_move_file_range(struct file *file_in, loff_t pos_in,
 	if (unlikely(f2fs_readonly(src->i_sb)))
 		return -EROFS;
 
-	if (S_ISDIR(src->i_mode) || S_ISDIR(dst->i_mode))
-		return -EISDIR;
+	if (!S_ISREG(src->i_mode) || !S_ISREG(dst->i_mode))
+		return -EINVAL;
 
 	if (f2fs_encrypted_inode(src) || f2fs_encrypted_inode(dst))
 		return -EOPNOTSUPP;
 
+	if (src == dst) {
+		if (pos_in == pos_out)
+			return 0;
+		if (pos_out > pos_in && pos_out < pos_in + len)
+			return -EINVAL;
+	}
+
 	inode_lock(src);
-	if (src != dst)
-		inode_lock(dst);
+	if (src != dst) {
+		if (!inode_trylock(dst)) {
+			ret = -EBUSY;
+			goto out;
+		}
+	}
 
 	ret = -EINVAL;
 	if (pos_in + len > src->i_size || pos_in + len < pos_in)
@@ -2143,8 +2154,9 @@ static int f2fs_move_file_range(struct file *file_in, loff_t pos_in,
 
 	f2fs_balance_fs(sbi, true);
 	f2fs_lock_op(sbi);
-	ret = __exchange_data_block(src, dst, pos_in,
-				pos_out, len >> F2FS_BLKSIZE_BITS, false);
+	ret = __exchange_data_block(src, dst, pos_in >> F2FS_BLKSIZE_BITS,
+				pos_out >> F2FS_BLKSIZE_BITS,
+				len >> F2FS_BLKSIZE_BITS, false);
 
 	if (!ret) {
 		if (dst_max_i_size)
@@ -2156,6 +2168,7 @@ static int f2fs_move_file_range(struct file *file_in, loff_t pos_in,
 out_unlock:
 	if (src != dst)
 		inode_unlock(dst);
+out:
 	inode_unlock(src);
 	return ret;
 }
