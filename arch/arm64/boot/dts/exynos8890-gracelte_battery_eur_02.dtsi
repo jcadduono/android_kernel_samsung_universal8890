@@ -11,11 +11,10 @@
 
 #include "exynos8890-gracelte_common_battery.dtsi"
 / {
-/*
 	battery {
 		battery,cisd_chg_limit_enable;
 	};
-*/
+
 	max77854-fuelgauge {
 		fuelgauge,fg_resistor = <2>;
 	};
