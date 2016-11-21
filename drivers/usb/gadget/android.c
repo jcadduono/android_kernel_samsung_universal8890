@@ -42,6 +42,9 @@
 #else
 #include "../function/f_mtp.c"
 #endif
+#include "../function/f_hid.h"
+#include "../function/f_hid_android_keyboard.c"
+#include "../function/f_hid_android_mouse.c"
 
 #include "../function/f_accessory.c"
 #define USB_ETH_RNDIS y
@@ -50,9 +53,6 @@
 #include "../function/f_diag.c"
 #include "../function/f_dm.c"
 #include "../function/u_ether.c"
-#include "../function/f_hid.h"
-#include "../function/f_hid_android_keyboard.c"
-#include "../function/f_hid_android_mouse.c"
 
 
 MODULE_AUTHOR("Mike Lockwood");
@@ -1497,8 +1497,8 @@ functions_store(struct device *pdev, struct device_attribute *attr,
 	char buf[256], *b;
 	char aliases[256], *a;
 	int err;
-	int is_ffs;
 	int ffs_enabled = 0;
+	int hid_enabled = 0;
 
 #ifdef CONFIG_USB_ANDROID_SAMSUNG_COMPOSITE
 	g_rndis = 0;
@@ -1526,56 +1526,59 @@ functions_store(struct device *pdev, struct device_attribute *attr,
 		if (!name)
 			continue;
 
-		is_ffs = 0;
 		strlcpy(aliases, dev->ffs_aliases, sizeof(aliases));
 		a = aliases;
 
 		while (a) {
 			char *alias = strsep(&a, ",");
 			if (alias && !strcmp(name, alias)) {
-				is_ffs = 1;
+				name = "ffs";
 				break;
 			}
 		}
 
-		if (is_ffs) {
-			if (ffs_enabled)
-				continue;
-			err = android_enable_function(dev, "ffs");
-			if (err)
-				pr_err("android_usb: Cannot enable ffs (%d)",
-									err);
-			else
-				ffs_enabled = 1;
+		if (ffs_enabled && !strcmp(name, "ffs"))
+			continue;
+
+		if (hid_enabled && !strcmp(name, "hid"))
+			continue;
+
+		err = android_enable_function(dev, name);
+		if (err) {
+			pr_err("android_usb: Cannot enable '%s' (%d)",
+						name, err);
 			continue;
 		}
 
-		err = android_enable_function(dev, name);
-		if (err)
-			pr_err("android_usb: Cannot enable '%s' (%d)",
-							   name, err);
+		if (!strcmp(name, "ffs"))
+			ffs_enabled = 1;
+
+		if (!strcmp(name, "hid"))
+			hid_enabled = 1;
+
 #ifdef CONFIG_USB_ANDROID_SAMSUNG_COMPOSITE
+		/* Enable ACM function, if MTP is enabled. */
+		if (!strcmp(name, "mtp")) {
+			name = "acm";
+			err = android_enable_function(dev, name);
+			if (err)
+				pr_err("android_usb: Cannot enable '%s' (%d)",
+							name, err);
+		}
 
-			/* Enable ACM function, if MTP is enabled. */
-			if (!strcmp(name, "mtp")) {
-				err = android_enable_function(dev, "acm");
-				if (err)
-					pr_err(
-					"android_usb: Cannot enable '%s'",
-					name);
-			}
-
-			if (!strcmp(name, "rndis")) {
-				g_rndis = 1;
-			}
-
+		if (!strcmp(name, "rndis"))
+			g_rndis = 1;
 #endif
 	}
 
 	/* Always enable HID gadget function. */
-	err = android_enable_function(dev, "hid");
-	if (err)
-		pr_err("android_usb: Cannot enable hid (%d)", err);
+	if (!hid_enabled) {
+		name = "hid";
+		err = android_enable_function(dev, name);
+		if (err)
+			pr_err("android_usb: Cannot enable '%s' (%d)",
+						name, err);
+	}
 
 	mutex_unlock(&dev->mutex);
 
