@@ -330,13 +330,16 @@ int __copy_instruction(u8 *dest, u8 *src)
 {
 	struct insn insn;
 	kprobe_opcode_t buf[MAX_INSN_SIZE];
+	int length;
 
 	kernel_insn_init(&insn, (void *)recover_probed_instruction(buf, (unsigned long)src));
 	insn_get_length(&insn);
+	length = insn.length;
+
 	/* Another subsystem puts a breakpoint, failed to recover */
 	if (insn.opcode.bytes[0] == BREAKPOINT_INSTRUCTION)
 		return 0;
-	memcpy(dest, insn.kaddr, insn.length);
+	memcpy(dest, insn.kaddr, length);
 
 #ifdef CONFIG_X86_64
 	if (insn_rip_relative(&insn)) {
@@ -366,7 +369,7 @@ int __copy_instruction(u8 *dest, u8 *src)
 		*(s32 *) disp = (s32) newdisp;
 	}
 #endif
-	return insn.length;
+	return length;
 }
 
 static int arch_copy_kprobe(struct kprobe *p)
@@ -928,7 +931,19 @@ int kprobe_fault_handler(struct pt_regs *regs, int trapnr)
 		 * normal page fault.
 		 */
 		regs->ip = (unsigned long)cur->addr;
+		/*
+		 * Trap flag (TF) has been set here because this fault
+		 * happened where the single stepping will be done.
+		 * So clear it by resetting the current kprobe:
+		 */
+		regs->flags &= ~X86_EFLAGS_TF;
+
+		/*
+		 * If the TF flag was set before the kprobe hit,
+		 * don't touch it:
+		 */
 		regs->flags |= kcb->kprobe_old_flags;
+
 		if (kcb->kprobe_status == KPROBE_REENTER)
 			restore_previous_kprobe(kcb);
 		else

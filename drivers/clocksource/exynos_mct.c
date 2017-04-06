@@ -470,7 +470,9 @@ static int exynos4_local_timer_setup(struct clock_event_device *evt)
 	exynos4_mct_write(TICK_BASE_CNT, mevt->base + MCT_L_TCNTB_OFFSET);
 
 	if (mct_int_type == MCT_INT_SPI) {
-		irq_force_affinity(mct_irqs[MCT_L0_IRQ + cpu], cpumask_of(cpu));
+		if (evt->irq == -1)
+			return -EIO;
+		irq_force_affinity(evt->irq, cpumask_of(cpu));
 		enable_irq(evt->irq);
 	} else {
 		enable_percpu_irq(mct_irqs[MCT_L0_IRQ], 0);
@@ -486,10 +488,12 @@ static int exynos4_local_timer_setup(struct clock_event_device *evt)
 static void exynos4_local_timer_stop(struct clock_event_device *evt)
 {
 	evt->set_mode(CLOCK_EVT_MODE_UNUSED, evt);
-	if (mct_int_type == MCT_INT_SPI)
-		disable_irq(evt->irq);
-	else
+	if (mct_int_type == MCT_INT_SPI) {
+		if (evt->irq != -1)
+			disable_irq_nosync(evt->irq);
+	} else {
 		disable_percpu_irq(mct_irqs[MCT_L0_IRQ]);
+	}
 }
 
 static int exynos4_mct_cpu_notify(struct notifier_block *self,

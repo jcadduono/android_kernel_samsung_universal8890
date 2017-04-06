@@ -720,7 +720,9 @@ static bool __udp_v6_is_mcast_sock(struct net *net, struct sock *sk,
 	    (inet->inet_dport && inet->inet_dport != rmt_port) ||
 	    (!ipv6_addr_any(&sk->sk_v6_daddr) &&
 		    !ipv6_addr_equal(&sk->sk_v6_daddr, rmt_addr)) ||
-	    (sk->sk_bound_dev_if && sk->sk_bound_dev_if != dif))
+	    (sk->sk_bound_dev_if && sk->sk_bound_dev_if != dif) ||
+	    (!ipv6_addr_any(&sk->sk_v6_rcv_saddr) &&
+		    !ipv6_addr_equal(&sk->sk_v6_rcv_saddr, loc_addr)))
 		return false;
 	if (!inet6_mc_check(sk, loc_addr, rmt_addr))
 		return false;
@@ -897,11 +899,9 @@ int __udp6_lib_rcv(struct sk_buff *skb, struct udp_table *udptable,
 		ret = udpv6_queue_rcv_skb(sk, skb);
 		sock_put(sk);
 
-		/* a return value > 0 means to resubmit the input, but
-		 * it wants the return to be -protocol, or 0
-		 */
+		/* a return value > 0 means to resubmit the input */
 		if (ret > 0)
-			return -ret;
+			return ret;
 
 		return 0;
 	}
@@ -1081,6 +1081,7 @@ int udpv6_sendmsg(struct kiocb *iocb, struct sock *sk,
 	DECLARE_SOCKADDR(struct sockaddr_in6 *, sin6, msg->msg_name);
 	struct in6_addr *daddr, *final_p, final;
 	struct ipv6_txoptions *opt = NULL;
+	struct ipv6_txoptions *opt_to_free = NULL;
 	struct ip6_flowlabel *flowlabel = NULL;
 	struct flowi6 fl6;
 	struct dst_entry *dst;
@@ -1234,8 +1235,10 @@ do_udp_sendmsg:
 			opt = NULL;
 		connected = 0;
 	}
-	if (opt == NULL)
-		opt = np->opt;
+	if (!opt) {
+		opt = txopt_get(np);
+		opt_to_free = opt;
+	}
 	if (flowlabel)
 		opt = fl6_merge_options(&opt_space, flowlabel, opt);
 	opt = ipv6_fixup_options(&opt_space, opt);
@@ -1329,6 +1332,7 @@ do_append_data:
 out:
 	dst_release(dst);
 	fl6_sock_release(flowlabel);
+	txopt_put(opt_to_free);
 	if (!err)
 		return len;
 	/*
